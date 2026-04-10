@@ -1,7 +1,7 @@
     (() => {
       const UI_KEY = 'daese_classroom_ui_v1';
       const SLOT_START = 9 * 60;
-      const SLOT_END = 18 * 60;
+const SLOT_END = 22 * 60; // 오후 10시
       const SLOT_MINUTES = 30;
       const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
       const VIEW_MODES = {
