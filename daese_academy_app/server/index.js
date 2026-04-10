@@ -1,0 +1,834 @@
+const path = require('path');
+const crypto = require('crypto');
+const express = require('express');
+const { Pool } = require('pg');
+
+const PORT = Number(process.env.PORT || 3000);
+const DATABASE_URL = process.env.DATABASE_URL;
+const APP_URL = process.env.APP_URL || '';
+const COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'daese_session';
+const SESSION_DAYS = Number(process.env.SESSION_DAYS || 14);
+const SLOT_START = 9 * 60;
+const SLOT_END = 18 * 60;
+const SLOT_MINUTES = 30;
+const SEOUL_OFFSET = '+09:00';
+const SEOUL_TZ = 'Asia/Seoul';
+
+if (!DATABASE_URL) {
+  console.error('DATABASE_URL 환경 변수가 필요합니다.');
+  process.exit(1);
+}
+
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: process.env.PGSSLMODE === 'require' ? { rejectUnauthorized: false } : undefined,
+});
+
+const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+app.use((req, res, next) => {
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  if ((APP_URL || '').startsWith('https://')) {
+    res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+  }
+  next();
+});
+app.use(express.json({ limit: '256kb' }));
+app.use(express.urlencoded({ extended: false }));
+
+const loginRate = new Map();
+
+function sanitizeTeacher(row) {
+  if (!row) return null;
+  return {
+    id: row.login_id,
+    dept: row.department,
+    role: row.role,
+    mustChangePassword: Boolean(row.must_change_password),
+  };
+}
+
+function parseCookies(header = '') {
+  return Object.fromEntries(
+    header
+      .split(';')
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const idx = part.indexOf('=');
+        if (idx === -1) return [part, ''];
+        return [decodeURIComponent(part.slice(0, idx)), decodeURIComponent(part.slice(idx + 1))];
+      })
+  );
+}
+
+function sha256(input) {
+  return crypto.createHash('sha256').update(String(input)).digest('hex');
+}
+
+function makeRandomToken(size = 32) {
+  return crypto.randomBytes(size).toString('hex');
+}
+
+function passwordHash(password, saltB64) {
+  const salt = saltB64 ? Buffer.from(saltB64, 'base64') : crypto.randomBytes(16);
+  const derived = crypto.scryptSync(String(password), salt, 64, { N: 16384, r: 8, p: 1 });
+  return `scrypt$16384$8$1$${salt.toString('base64')}$${derived.toString('base64')}`;
+}
+
+function verifyPassword(password, stored) {
+  if (!stored || typeof stored !== 'string') return false;
+  const parts = stored.split('$');
+  if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
+  const [, nStr, rStr, pStr, saltB64, expectedB64] = parts;
+  const derived = crypto.scryptSync(String(password), Buffer.from(saltB64, 'base64'), Buffer.from(expectedB64, 'base64').length, {
+    N: Number(nStr),
+    r: Number(rStr),
+    p: Number(pStr),
+  });
+  return crypto.timingSafeEqual(derived, Buffer.from(expectedB64, 'base64'));
+}
+
+function jsonError(res, status, message, extra = {}) {
+  res.status(status).json({ ok: false, message, ...extra });
+}
+
+function isValidDate(dateStr) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr))) return false;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+function addDays(dateStr, amount) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + amount);
+  return dt.toISOString().slice(0, 10);
+}
+
+function parseTimeToMinutes(timeStr) {
+  const m = /^([01]\d|2[0-3]):([03]0)$/.exec(String(timeStr));
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function isValidSlotTime(timeStr, allowEnd = false) {
+  const minutes = parseTimeToMinutes(timeStr);
+  if (minutes === null) return false;
+  if (allowEnd && minutes === SLOT_END) return true;
+  return minutes >= SLOT_START && minutes < SLOT_END && minutes % SLOT_MINUTES === 0;
+}
+
+function toKstTimestamp(dateStr, timeStr) {
+  return `${dateStr}T${timeStr}:00${SEOUL_OFFSET}`;
+}
+
+function getSeoulNowParts() {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: SEOUL_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  });
+  const parts = Object.fromEntries(
+    formatter.formatToParts(new Date()).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value])
+  );
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}`,
+    actualMinutes: Number(parts.hour) * 60 + Number(parts.minute),
+  };
+}
+
+function roomPublic(row) {
+  return {
+    id: row.code,
+    name: row.name,
+    short: row.short_name,
+    floor: row.floor,
+    type: row.room_type,
+  };
+}
+
+function reservationPublic(row) {
+  return {
+    id: row.id,
+    date: row.date,
+    roomId: row.room_id,
+    ownerId: row.owner_id,
+    ownerDept: row.owner_dept,
+    title: row.title,
+    note: row.note || '',
+    start: row.start_time,
+    end: row.end_time,
+    category: row.category,
+    recurringGroupId: row.repeat_group_id || null,
+    createdAt: row.created_at,
+  };
+}
+
+function getClientIp(req) {
+  return (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim();
+}
+
+function checkRateLimit(req) {
+  const ip = getClientIp(req) || 'unknown';
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000;
+  const maxFailures = 10;
+  const entry = loginRate.get(ip) || { failures: [] };
+  entry.failures = entry.failures.filter((ts) => now - ts < windowMs);
+  loginRate.set(ip, entry);
+  if (entry.failures.length >= maxFailures) {
+    return { blocked: true, ip };
+  }
+  return { blocked: false, ip };
+}
+
+function recordLoginFailure(ip) {
+  const now = Date.now();
+  const entry = loginRate.get(ip) || { failures: [] };
+  entry.failures = entry.failures.filter((ts) => now - ts < 15 * 60 * 1000);
+  entry.failures.push(now);
+  loginRate.set(ip, entry);
+}
+
+function clearLoginFailures(ip) {
+  loginRate.delete(ip);
+}
+
+function buildCookieParts(req) {
+  const secure = APP_URL.startsWith('https://') || req.secure || req.headers['x-forwarded-proto'] === 'https';
+  return [
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    secure ? 'Secure' : null,
+    `Max-Age=${SESSION_DAYS * 24 * 60 * 60}`,
+  ].filter(Boolean);
+}
+
+function setSessionCookie(res, req, token) {
+  res.setHeader('Set-Cookie', [`${COOKIE_NAME}=${encodeURIComponent(token)}`, ...buildCookieParts(req)].join('; '));
+}
+
+function clearSessionCookie(res, req) {
+  const parts = buildCookieParts(req).filter((part) => !part.startsWith('Max-Age='));
+  res.setHeader('Set-Cookie', [`${COOKIE_NAME}=`, ...parts, 'Expires=Thu, 01 Jan 1970 00:00:00 GMT'].join('; '));
+}
+
+async function findTeacherByLoginId(loginId) {
+  const { rows } = await pool.query(
+    `SELECT id, login_id, display_name, department, role, password_hash, must_change_password
+       FROM teachers
+      WHERE login_id = $1`,
+    [loginId]
+  );
+  return rows[0] || null;
+}
+
+async function findRoomByCode(code) {
+  const { rows } = await pool.query(
+    `SELECT id, code, name, short_name, floor, room_type, sort_order
+       FROM rooms
+      WHERE code = $1 AND active = TRUE`,
+    [code]
+  );
+  return rows[0] || null;
+}
+
+async function findConflict(client, roomId, startAt, endAt, excludeId = null) {
+  const { rows } = await client.query(
+    `SELECT r.id::text,
+            room.code AS room_id,
+            room.short_name,
+            teacher.login_id AS owner_id,
+            r.title,
+            to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'YYYY-MM-DD') AS date,
+            to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS start_time,
+            to_char(r.end_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS end_time
+       FROM reservations r
+       JOIN rooms room ON room.id = r.room_id
+       JOIN teachers teacher ON teacher.id = r.teacher_id
+      WHERE r.room_id = $1
+        AND tstzrange(r.start_at, r.end_at, '[)') && tstzrange($2::timestamptz, $3::timestamptz, '[)')
+        AND ($4::uuid IS NULL OR r.id <> $4::uuid)
+      LIMIT 1`,
+    [roomId, startAt, endAt, excludeId]
+  );
+  return rows[0] || null;
+}
+
+async function loadBoardReservations(startDate, endDate) {
+  const startAt = `${startDate}T00:00:00${SEOUL_OFFSET}`;
+  const endExclusive = `${addDays(endDate, 1)}T00:00:00${SEOUL_OFFSET}`;
+  const { rows } = await pool.query(
+    `SELECT r.id::text,
+            room.code AS room_id,
+            teacher.login_id AS owner_id,
+            teacher.department AS owner_dept,
+            r.title,
+            COALESCE(r.note, '') AS note,
+            r.category,
+            COALESCE(r.repeat_group_id::text, '') AS repeat_group_id,
+            r.created_at,
+            to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'YYYY-MM-DD') AS date,
+            to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS start_time,
+            to_char(r.end_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS end_time
+       FROM reservations r
+       JOIN rooms room ON room.id = r.room_id
+       JOIN teachers teacher ON teacher.id = r.teacher_id
+      WHERE r.start_at >= $1::timestamptz
+        AND r.start_at < $2::timestamptz
+      ORDER BY room.sort_order, r.start_at, r.created_at`,
+    [startAt, endExclusive]
+  );
+  return rows.map(reservationPublic);
+}
+
+async function loadSummary(user, floor = 'all') {
+  const now = getSeoulNowParts();
+  const nowTs = `${now.date}T${now.time}:00${SEOUL_OFFSET}`;
+
+  const [availableRoomsRes, allRoomsRes, todayReservationsRes, upcomingMineRes] = await Promise.all([
+    pool.query(
+      `SELECT code, name, short_name, floor, room_type
+         FROM rooms room
+        WHERE room.active = TRUE
+          AND ($1::text = 'all' OR room.floor = $1)
+          AND NOT EXISTS (
+            SELECT 1
+              FROM reservations r
+             WHERE r.room_id = room.id
+               AND r.start_at <= $2::timestamptz
+               AND r.end_at > $2::timestamptz
+          )
+        ORDER BY room.sort_order`,
+      [floor, nowTs]
+    ),
+    pool.query(
+      `SELECT code, name, short_name, floor, room_type
+         FROM rooms
+        WHERE active = TRUE AND ($1::text = 'all' OR floor = $1)
+        ORDER BY sort_order`,
+      [floor]
+    ),
+    pool.query(
+      `SELECT room.code AS room_id,
+              room.short_name,
+              to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS start_time,
+              to_char(r.end_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS end_time
+         FROM reservations r
+         JOIN rooms room ON room.id = r.room_id
+        WHERE ($1::text = 'all' OR room.floor = $1)
+          AND r.start_at >= $2::timestamptz
+          AND r.start_at < $3::timestamptz
+        ORDER BY room.sort_order, r.start_at`,
+      [floor, `${now.date}T00:00:00${SEOUL_OFFSET}`, `${addDays(now.date, 1)}T00:00:00${SEOUL_OFFSET}`]
+    ),
+    pool.query(
+      `SELECT r.id::text,
+              room.code AS room_id,
+              teacher.login_id AS owner_id,
+              teacher.department AS owner_dept,
+              r.title,
+              COALESCE(r.note, '') AS note,
+              r.category,
+              COALESCE(r.repeat_group_id::text, '') AS repeat_group_id,
+              r.created_at,
+              to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'YYYY-MM-DD') AS date,
+              to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS start_time,
+              to_char(r.end_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS end_time
+         FROM reservations r
+         JOIN rooms room ON room.id = r.room_id
+         JOIN teachers teacher ON teacher.id = r.teacher_id
+        WHERE r.teacher_id = $1
+          AND r.end_at >= NOW()
+        ORDER BY r.start_at ASC
+        LIMIT 8`,
+      [user.dbId]
+    ),
+  ]);
+
+  const availableNow = availableRoomsRes.rows.map(roomPublic);
+  const roomMap = new Map();
+  for (const row of todayReservationsRes.rows) {
+    const list = roomMap.get(row.room_id) || [];
+    list.push({ start: row.start_time, end: row.end_time });
+    roomMap.set(row.room_id, list);
+  }
+
+  const remainingFree = [];
+  const cursorStart = Math.max(SLOT_START, Math.ceil(now.actualMinutes / SLOT_MINUTES) * SLOT_MINUTES);
+  if (cursorStart < SLOT_END) {
+    for (const room of allRoomsRes.rows) {
+      const reservations = (roomMap.get(room.code) || []).slice().sort((a, b) => parseTimeToMinutes(a.start) - parseTimeToMinutes(b.start));
+      let cursor = cursorStart;
+      for (const item of reservations) {
+        const start = parseTimeToMinutes(item.start);
+        const end = parseTimeToMinutes(item.end);
+        if (end <= cursor) continue;
+        if (start > cursor) {
+          remainingFree.push({ room: room.short_name, start: minutesToTime(cursor), end: minutesToTime(start) });
+          break;
+        }
+        cursor = Math.max(cursor, end);
+      }
+      if (cursor < SLOT_END) {
+        remainingFree.push({ room: room.short_name, start: minutesToTime(cursor), end: minutesToTime(SLOT_END) });
+      }
+    }
+  }
+
+  return {
+    availableNow,
+    remainingFree: remainingFree.slice(0, 12),
+    myUpcoming: upcomingMineRes.rows.map(reservationPublic),
+    now,
+  };
+}
+
+function minutesToTime(minutes) {
+  const h = String(Math.floor(minutes / 60)).padStart(2, '0');
+  const m = String(minutes % 60).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+async function authMiddleware(req, res, next) {
+  try {
+    const cookies = parseCookies(req.headers.cookie || '');
+    const token = cookies[COOKIE_NAME];
+    if (!token) {
+      req.user = null;
+      return next();
+    }
+    const tokenHash = sha256(token);
+    const { rows } = await pool.query(
+      `SELECT s.id AS session_id,
+              t.id AS teacher_id,
+              t.login_id,
+              t.department,
+              t.role,
+              t.must_change_password
+         FROM teacher_sessions s
+         JOIN teachers t ON t.id = s.teacher_id
+        WHERE s.token_hash = $1
+          AND s.expires_at > NOW()
+        LIMIT 1`,
+      [tokenHash]
+    );
+    const row = rows[0];
+    if (!row) {
+      clearSessionCookie(res, req);
+      req.user = null;
+      return next();
+    }
+    req.user = {
+      dbId: row.teacher_id,
+      sessionId: row.session_id,
+      login_id: row.login_id,
+      department: row.department,
+      role: row.role,
+      must_change_password: row.must_change_password,
+    };
+    pool.query('UPDATE teacher_sessions SET last_seen_at = NOW() WHERE id = $1', [row.session_id]).catch(() => {});
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+function requireAuth(req, res, next) {
+  if (!req.user) return jsonError(res, 401, '로그인이 필요합니다.');
+  next();
+}
+
+app.use(authMiddleware);
+
+app.get('/api/health', async (req, res, next) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ ok: true, service: 'daese-classroom-scheduler' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/bootstrap', async (req, res, next) => {
+  try {
+    const [teachersRes, roomsRes] = await Promise.all([
+      pool.query(
+        `SELECT login_id AS id, department AS dept, role
+           FROM teachers
+          ORDER BY CASE department WHEN '영어과' THEN 1 ELSE 2 END, display_name`
+      ),
+      pool.query(
+        `SELECT code, name, short_name, floor, room_type
+           FROM rooms
+          WHERE active = TRUE
+          ORDER BY sort_order`
+      ),
+    ]);
+    res.json({
+      ok: true,
+      appName: '대세학원 강의실 공유 예약 보드',
+      orgName: '대세학원 · 대세영어 / 대세국어',
+      settings: {
+        slotStart: SLOT_START,
+        slotEnd: SLOT_END,
+        slotMinutes: SLOT_MINUTES,
+        timezone: SEOUL_TZ,
+      },
+      me: req.user
+        ? {
+            id: req.user.login_id,
+            dept: req.user.department,
+            role: req.user.role,
+            mustChangePassword: Boolean(req.user.must_change_password),
+          }
+        : null,
+      users: teachersRes.rows,
+      rooms: roomsRes.rows.map(roomPublic),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/login', async (req, res, next) => {
+  try {
+    const rate = checkRateLimit(req);
+    if (rate.blocked) return jsonError(res, 429, '로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.');
+
+    const loginId = String(req.body.loginId || '').trim();
+    const password = String(req.body.password || '');
+    if (!loginId || !password) {
+      recordLoginFailure(rate.ip);
+      return jsonError(res, 400, '아이디와 비밀번호를 입력해 주세요.');
+    }
+
+    const teacher = await findTeacherByLoginId(loginId);
+    if (!teacher || !verifyPassword(password, teacher.password_hash)) {
+      recordLoginFailure(rate.ip);
+      return jsonError(res, 401, '아이디 또는 비밀번호가 맞지 않습니다.');
+    }
+
+    const token = makeRandomToken(32);
+    const tokenHash = sha256(token);
+    await pool.query(
+      `INSERT INTO teacher_sessions (teacher_id, token_hash, expires_at)
+       VALUES ($1, $2, NOW() + ($3 || ' days')::interval)`,
+      [teacher.id, tokenHash, SESSION_DAYS]
+    );
+    clearLoginFailures(rate.ip);
+    setSessionCookie(res, req, token);
+    res.json({ ok: true, me: sanitizeTeacher(teacher) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/logout', requireAuth, async (req, res, next) => {
+  try {
+    const cookies = parseCookies(req.headers.cookie || '');
+    const token = cookies[COOKIE_NAME];
+    if (token) {
+      await pool.query('DELETE FROM teacher_sessions WHERE token_hash = $1', [sha256(token)]);
+    }
+    clearSessionCookie(res, req);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/change-password', requireAuth, async (req, res, next) => {
+  try {
+    const currentPassword = String(req.body.currentPassword || '');
+    const newPassword = String(req.body.newPassword || '');
+    if (!currentPassword || !newPassword) {
+      return jsonError(res, 400, '현재 비밀번호와 새 비밀번호를 모두 입력해 주세요.');
+    }
+    if (newPassword.length < 4) {
+      return jsonError(res, 400, '새 비밀번호는 4자 이상으로 입력해 주세요.');
+    }
+    const teacher = await findTeacherByLoginId(req.user.login_id);
+    if (!teacher || !verifyPassword(currentPassword, teacher.password_hash)) {
+      return jsonError(res, 400, '현재 비밀번호가 맞지 않습니다.');
+    }
+    await pool.query(
+      `UPDATE teachers
+          SET password_hash = $1,
+              must_change_password = FALSE,
+              updated_at = NOW()
+        WHERE id = $2`,
+      [passwordHash(newPassword), teacher.id]
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/reservations', requireAuth, async (req, res, next) => {
+  try {
+    const startDate = String(req.query.start || '');
+    const endDate = String(req.query.end || '');
+    if (!isValidDate(startDate) || !isValidDate(endDate) || endDate < startDate) {
+      return jsonError(res, 400, '조회 날짜 범위가 올바르지 않습니다.');
+    }
+    const reservations = await loadBoardReservations(startDate, endDate);
+    res.json({ ok: true, reservations });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/dashboard-summary', requireAuth, async (req, res, next) => {
+  try {
+    const floor = ['all', '6층', '7층'].includes(String(req.query.floor || 'all')) ? String(req.query.floor || 'all') : 'all';
+    const summary = await loadSummary(req.user, floor);
+    res.json({ ok: true, ...summary });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/reservations', requireAuth, async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const date = String(req.body.date || '');
+    const roomCode = String(req.body.roomId || '');
+    const start = String(req.body.start || '');
+    const end = String(req.body.end || '');
+    const title = String(req.body.title || '').trim();
+    const note = String(req.body.note || '').trim();
+    const category = String(req.body.category || 'usage');
+    const ownerLoginId = req.user.role === 'admin' ? String(req.body.ownerId || req.user.login_id) : req.user.login_id;
+    const repeatCount = Number(req.body.repeatCount || 1);
+
+    if (!isValidDate(date)) return jsonError(res, 400, '날짜가 올바르지 않습니다.');
+    if (!isValidSlotTime(start) || !isValidSlotTime(end, true)) return jsonError(res, 400, '시간은 30분 단위로 입력해 주세요.');
+    if (parseTimeToMinutes(end) <= parseTimeToMinutes(start)) return jsonError(res, 400, '종료 시간은 시작 시간보다 뒤여야 합니다.');
+    if (!title) return jsonError(res, 400, '용도 / 제목을 입력해 주세요.');
+    if (!['usage', 'event', 'blocked'].includes(category)) return jsonError(res, 400, '예약 구분이 올바르지 않습니다.');
+    if (category === 'blocked' && req.user.role !== 'admin') return jsonError(res, 403, '관리자만 차단 일정을 만들 수 있습니다.');
+    if (!Number.isInteger(repeatCount) || repeatCount < 1 || repeatCount > 12) return jsonError(res, 400, '반복 횟수는 1~12회만 가능합니다.');
+
+    const [room, owner] = await Promise.all([findRoomByCode(roomCode), findTeacherByLoginId(ownerLoginId)]);
+    if (!room) return jsonError(res, 404, '강의실을 찾을 수 없습니다.');
+    if (!owner) return jsonError(res, 404, '예약자를 찾을 수 없습니다.');
+    if (req.user.role !== 'admin' && owner.login_id !== req.user.login_id) return jsonError(res, 403, '본인 일정만 예약할 수 있습니다.');
+
+    const repeatGroupId = repeatCount > 1 ? crypto.randomUUID() : null;
+    const payloads = Array.from({ length: repeatCount }, (_, index) => {
+      const targetDate = addDays(date, index * 7);
+      return {
+        date: targetDate,
+        startAt: toKstTimestamp(targetDate, start),
+        endAt: toKstTimestamp(targetDate, end),
+      };
+    });
+
+    await client.query('BEGIN');
+    for (const item of payloads) {
+      const conflict = await findConflict(client, room.id, item.startAt, item.endAt, null);
+      if (conflict) {
+        await client.query('ROLLBACK');
+        return jsonError(res, 409, '중복 예약이 있어 저장할 수 없습니다.', {
+          conflict: {
+            date: conflict.date,
+            start: conflict.start_time,
+            end: conflict.end_time,
+            room: conflict.short_name,
+            title: conflict.title,
+            ownerId: conflict.owner_id,
+          },
+        });
+      }
+    }
+
+    const inserted = [];
+    for (const item of payloads) {
+      const { rows } = await client.query(
+        `INSERT INTO reservations (
+            room_id, teacher_id, category, title, note,
+            start_at, end_at, repeat_group_id,
+            created_by_teacher_id, updated_by_teacher_id
+         )
+         VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz, $8::uuid, $9, $9)
+         RETURNING id::text`,
+        [room.id, owner.id, category, title, note, item.startAt, item.endAt, repeatGroupId, req.user.dbId]
+      );
+      inserted.push(rows[0].id);
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true, insertedCount: inserted.length, ids: inserted });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (error && error.code === '23P01') {
+      return jsonError(res, 409, '이미 같은 시간대에 예약된 강의실입니다.');
+    }
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.put('/api/reservations/:id', requireAuth, async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const reservationId = String(req.params.id || '');
+    const { rows: existingRows } = await client.query(
+      `SELECT r.id::text,
+              r.room_id,
+              r.teacher_id,
+              r.category,
+              r.repeat_group_id::text,
+              t.login_id AS owner_id
+         FROM reservations r
+         JOIN teachers t ON t.id = r.teacher_id
+        WHERE r.id = $1::uuid`,
+      [reservationId]
+    );
+    const existing = existingRows[0];
+    if (!existing) return jsonError(res, 404, '예약을 찾을 수 없습니다.');
+    const canEdit = req.user.role === 'admin' || existing.owner_id === req.user.login_id;
+    if (!canEdit) return jsonError(res, 403, '이 예약을 수정할 권한이 없습니다.');
+
+    const date = String(req.body.date || '');
+    const roomCode = String(req.body.roomId || '');
+    const start = String(req.body.start || '');
+    const end = String(req.body.end || '');
+    const title = String(req.body.title || '').trim();
+    const note = String(req.body.note || '').trim();
+    const category = String(req.body.category || 'usage');
+    const ownerLoginId = req.user.role === 'admin' ? String(req.body.ownerId || existing.owner_id) : existing.owner_id;
+
+    if (!isValidDate(date)) return jsonError(res, 400, '날짜가 올바르지 않습니다.');
+    if (!isValidSlotTime(start) || !isValidSlotTime(end, true)) return jsonError(res, 400, '시간은 30분 단위로 입력해 주세요.');
+    if (parseTimeToMinutes(end) <= parseTimeToMinutes(start)) return jsonError(res, 400, '종료 시간은 시작 시간보다 뒤여야 합니다.');
+    if (!title) return jsonError(res, 400, '용도 / 제목을 입력해 주세요.');
+    if (!['usage', 'event', 'blocked'].includes(category)) return jsonError(res, 400, '예약 구분이 올바르지 않습니다.');
+    if (category === 'blocked' && req.user.role !== 'admin') return jsonError(res, 403, '관리자만 차단 일정으로 바꿀 수 있습니다.');
+
+    const [room, owner] = await Promise.all([findRoomByCode(roomCode), findTeacherByLoginId(ownerLoginId)]);
+    if (!room) return jsonError(res, 404, '강의실을 찾을 수 없습니다.');
+    if (!owner) return jsonError(res, 404, '예약자를 찾을 수 없습니다.');
+    if (req.user.role !== 'admin' && owner.login_id !== req.user.login_id) return jsonError(res, 403, '본인 일정만 수정할 수 있습니다.');
+
+    const startAt = toKstTimestamp(date, start);
+    const endAt = toKstTimestamp(date, end);
+
+    await client.query('BEGIN');
+    const conflict = await findConflict(client, room.id, startAt, endAt, reservationId);
+    if (conflict) {
+      await client.query('ROLLBACK');
+      return jsonError(res, 409, '중복 예약이 있어 저장할 수 없습니다.', {
+        conflict: {
+          date: conflict.date,
+          start: conflict.start_time,
+          end: conflict.end_time,
+          room: conflict.short_name,
+          title: conflict.title,
+          ownerId: conflict.owner_id,
+        },
+      });
+    }
+
+    await client.query(
+      `UPDATE reservations
+          SET room_id = $1,
+              teacher_id = $2,
+              category = $3,
+              title = $4,
+              note = $5,
+              start_at = $6::timestamptz,
+              end_at = $7::timestamptz,
+              updated_by_teacher_id = $8,
+              updated_at = NOW()
+        WHERE id = $9::uuid`,
+      [room.id, owner.id, category, title, note, startAt, endAt, req.user.dbId, reservationId]
+    );
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (error && error.code === '23P01') {
+      return jsonError(res, 409, '이미 같은 시간대에 예약된 강의실입니다.');
+    }
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.delete('/api/reservations/:id', requireAuth, async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const reservationId = String(req.params.id || '');
+    const scope = req.query.scope === 'series' ? 'series' : 'single';
+    const { rows } = await client.query(
+      `SELECT r.id::text, r.repeat_group_id::text, t.login_id AS owner_id
+         FROM reservations r
+         JOIN teachers t ON t.id = r.teacher_id
+        WHERE r.id = $1::uuid`,
+      [reservationId]
+    );
+    const reservation = rows[0];
+    if (!reservation) return jsonError(res, 404, '예약을 찾을 수 없습니다.');
+    const canDelete = req.user.role === 'admin' || reservation.owner_id === req.user.login_id;
+    if (!canDelete) return jsonError(res, 403, '이 예약을 취소할 권한이 없습니다.');
+
+    if (scope === 'series' && reservation.repeat_group_id) {
+      const result = await client.query('DELETE FROM reservations WHERE repeat_group_id = $1::uuid', [reservation.repeat_group_id]);
+      return res.json({ ok: true, deletedCount: result.rowCount, scope: 'series' });
+    }
+
+    const result = await client.query('DELETE FROM reservations WHERE id = $1::uuid', [reservationId]);
+    res.json({ ok: true, deletedCount: result.rowCount, scope: 'single' });
+  } catch (error) {
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  index: false,
+  maxAge: '1h',
+}));
+
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+});
+
+app.use((error, req, res, next) => {
+  console.error(error);
+  if (res.headersSent) return next(error);
+  jsonError(res, 500, '서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+});
+
+setInterval(() => {
+  pool.query('DELETE FROM teacher_sessions WHERE expires_at <= NOW()').catch(() => {});
+}, 30 * 60 * 1000).unref();
+
+async function start() {
+  await pool.query('SELECT 1');
+  app.listen(PORT, () => {
+    console.log(`대세학원 강의실 예약 서버가 포트 ${PORT}에서 실행 중입니다.`);
+  });
+}
+
+start().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
