@@ -61,11 +61,16 @@
     }
 
     button.primary {
-      background: linear-gradient(135deg, var(--primary-dark), var(--primary));
-      color: white;
-      border-color: var(--primary);
-      font-weight: 700;
-    }
+  background: linear-gradient(135deg, #e96412, #f37520);
+  color: white;
+  border-color: #f37520;
+  font-weight: 700;
+}
+
+button.primary:hover {
+  border-color: #d95c10;
+  background: linear-gradient(135deg, #d95c10, #e96d1a);
+}
 
     button.ghost {
       background: var(--panel-soft);
@@ -937,10 +942,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(180deg, #fd7a1f 0%, #f26a14 100%);
+  background: #f37520;
   padding: 38px;
 }
-
+    
 .brand-hero-inner {
   width: 100%;
   height: 100%;
@@ -966,6 +971,7 @@
   align-items: center;
   justify-content: center;
   flex: 1;
+  background: transparent;
 }
 
 .brand-logo {
@@ -973,6 +979,7 @@
   max-width: 100%;
   height: auto;
   object-fit: contain;
+  background: transparent;
 }
     
   </style>
