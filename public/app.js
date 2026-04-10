@@ -220,14 +220,6 @@ function getEndTimeOptions() {
   return slots;
 }
 
-      function getEndTimeOptions() {
-        const slots = [];
-        for (let m = SLOT_START + SLOT_MINUTES; m <= SLOT_END; m += SLOT_MINUTES) {
-          slots.push(minutesToTime(m));
-        }
-        return slots;
-      }
-
       function getRoom(roomId) {
         return state.rooms.find(r => r.id === roomId) || null;
       }
@@ -684,13 +676,12 @@ return slots.filter(time => timeToMinutes(time) >= nextSlot);
               html += renderReservationCell(reservation, span, user);
               i += span;
             } else {
-              const slotMinutes = getSlotMinutes();
-const isNow = date === now.date && timeToMinutes(slot) <= now.actualMinutes && now.actualMinutes < timeToMinutes(slot) + slotMinutes;
-              const slotMinutes = getSlotMinutes();
-const past = date < now.date || (date === now.date && timeToMinutes(slot) + slotMinutes <= now.actualMinutes);
-              html += `<td class="empty-slot ${isNow ? 'now-marker' : ''} ${past ? 'past-slot' : ''}" data-action="new-reservation-cell" data-room-id="${escapeHtml(room.id)}" data-date="${escapeHtml(date)}" data-start="${escapeHtml(slot)}"></td>`;
-              i += 1;
-            }
+  const slotMinutes = getSlotMinutes();
+  const isNow = date === now.date && timeToMinutes(slot) <= now.actualMinutes && now.actualMinutes < timeToMinutes(slot) + slotMinutes;
+  const past = date < now.date || (date === now.date && timeToMinutes(slot) + slotMinutes <= now.actualMinutes);
+  html += `<td class="empty-slot ${isNow ? 'now-marker' : ''} ${past ? 'past-slot' : ''}" data-action="new-reservation-cell" data-room-id="${escapeHtml(room.id)}" data-date="${escapeHtml(date)}" data-start="${escapeHtml(slot)}"></td>`;
+  i += 1;
+}
           }
         }
         html += '</tr>';
@@ -730,8 +721,9 @@ const past = date < now.date || (date === now.date && timeToMinutes(slot) + slot
               row += renderReservationCell(reservation, span, user);
               i += span;
             } else {
-              const isNow = date === now.date && timeToMinutes(slot) <= now.actualMinutes && now.actualMinutes < timeToMinutes(slot) + SLOT_MINUTES;
-              const past = date < now.date || (date === now.date && timeToMinutes(slot) + SLOT_MINUTES <= now.actualMinutes);
+              const slotMinutes = getSlotMinutes();
+const isNow = date === now.date && timeToMinutes(slot) <= now.actualMinutes && now.actualMinutes < timeToMinutes(slot) + slotMinutes;
+const past = date < now.date || (date === now.date && timeToMinutes(slot) + slotMinutes <= now.actualMinutes);
               row += `<td class="empty-slot ${isNow ? 'now-marker' : ''} ${past ? 'past-slot' : ''}" data-action="new-reservation-cell" data-room-id="${escapeHtml(room.id)}" data-date="${escapeHtml(date)}" data-start="${escapeHtml(slot)}"></td>`;
               i += 1;
             }
