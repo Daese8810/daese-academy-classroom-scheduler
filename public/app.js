@@ -2,7 +2,7 @@
       const UI_KEY = 'daese_classroom_ui_v1';
       const SLOT_START = 9 * 60;
 const SLOT_END = 22 * 60; // 오후 10시
-      const SLOT_MINUTES = 30;
+      const DEFAULT_SLOT_MINUTES = 30;
       const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
       const VIEW_MODES = {
         week: '주간 보기',
@@ -31,20 +31,21 @@ const SLOT_END = 22 * 60; // 오후 10시
       };
 
       function defaultUiState() {
-        const today = formatDate(new Date());
-        return {
-          selectedDate: today,
-          mobileSelectedDate: today,
-          viewMode: 'week',
-          floor: 'all',
-          teacher: 'all',
-          dept: 'all',
-          availableNowOnly: false,
-          remainingTodayOnly: false,
-          myOnly: false,
-          forceMobile: false
-        };
-      }
+  const today = formatDate(new Date());
+  return {
+    selectedDate: today,
+    mobileSelectedDate: today,
+    viewMode: 'week',
+    floor: 'all',
+    teacher: 'all',
+    dept: 'all',
+    availableNowOnly: false,
+    remainingTodayOnly: false,
+    myOnly: false,
+    forceMobile: false,
+    slotMinutes: 30 // 30분 / 60분 전환용
+  };
+}
 
       function loadUiState() {
         try {
