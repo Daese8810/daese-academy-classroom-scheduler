@@ -15,20 +15,36 @@ const SLOT_END = 22 * 60; // 오후 10시
       const toastWrap = document.getElementById('toastWrap');
 
       let state = {
-        appName: '대세학원 대세학원 강의실 공유 예약 보드',
-        orgName: '대세학원 · 대세영어 / 대세국어',
-        users: [],
-        rooms: [],
-        reservations: [],
-        summary: {
-          availableNow: [],
-          remainingFree: [],
-          myUpcoming: [],
-          now: null
-        },
-        me: null,
-        ui: loadUiState()
-      };
+  appName: '대세학원 대세학원 강의실 예약',
+  orgName: '대세영어 X 대세국어',
+  users: [],
+  rooms: [],
+  reservations: [],
+  summary: {
+    availableNow: [],
+    remainingFree: [],
+    myUpcoming: [],
+    now: null
+  },
+  me: null,
+  ui: loadUiState()
+};
+
+const ROOM_CAPACITY = [
+  { name: '6층 1번', capacity: 14 },
+  { name: '6층 2번', capacity: 10 },
+  { name: '6층 3번', capacity: 10 },
+  { name: '6층 4번', capacity: 14 },
+  { name: '6층 5번', capacity: 12 },
+  { name: '6층 6번', capacity: 12 },
+  { name: '6층 세미나실', capacity: 24 },
+  { name: '6층 7번', capacity: 3 },
+  { name: '7층 1번', capacity: 10 },
+  { name: '7층 2번', capacity: 10 },
+  { name: '7층 3번', capacity: 9 },
+  { name: '7층 4번', capacity: 9 },
+  { name: '7층 5번', capacity: 34 }
+];
 
       function defaultUiState() {
   const today = formatDate(new Date());
@@ -442,7 +458,7 @@ return slots.filter(time => timeToMinutes(time) >= nextSlot);
             <div class="app-header-inner">
               <div class="brand">
                 <h1>${escapeHtml(state.appName)}</h1>
-                <p>${escapeHtml(state.orgName)} · 6층 1~7번 강의실, 6층 세미나실, 7층 1~5번 강의실 · ${state.ui.slotMinutes}분 단위 예약</p>
+                <p>${escapeHtml(state.orgName)} · 6층, 7층 강의실· ${state.ui.slotMinutes}분 단위 예약</p>
               </div>
               <div class="user-toolbar">
                 <span class="badge ${user.role === 'admin' ? 'admin' : ''}">${escapeHtml(user.id)} · ${escapeHtml(user.dept)}${user.role === 'admin' ? ' · 관리자' : ''}</span>
@@ -503,17 +519,43 @@ return slots.filter(time => timeToMinutes(time) >= nextSlot);
                 </div>
               </div>
               <div class="toolbar-row">
-                <div class="chip-row">
-                  <button class="chip ${state.ui.dept === 'all' ? 'active' : ''}" data-action="quick-dept" data-dept="all">전체 보기</button>
-                  <button class="chip ${state.ui.dept === '영어과' ? 'active' : ''}" data-action="quick-dept" data-dept="영어과">영어과만 보기</button>
-                  <button class="chip ${state.ui.dept === '국어과' ? 'active' : ''}" data-action="quick-dept" data-dept="국어과">국어과만 보기</button>
-                </div>
-                <div class="group">
-                  <label class="toggle-pill"><input type="checkbox" id="availableNowOnly" ${state.ui.availableNowOnly ? 'checked' : ''} /> 지금 비어 있는 강의실만 보기</label>
-                  <label class="toggle-pill"><input type="checkbox" id="remainingTodayOnly" ${state.ui.remainingTodayOnly ? 'checked' : ''} /> 오늘 남은 빈 시간만 보기</label>
-                  <label class="toggle-pill"><input type="checkbox" id="myOnly" ${state.ui.myOnly ? 'checked' : ''} /> 내가 예약한 것만 보기</label>
-                  <label class="toggle-pill"><input type="checkbox" id="forceMobile" ${state.ui.forceMobile ? 'checked' : ''} /> 모바일 화면으로 보기</label>
-                </div>
+  <div class="chip-row">
+    <button class="chip ${state.ui.dept === 'all' ? 'active' : ''}" data-action="quick-dept" data-dept="all">전체 보기</button>
+    <button class="chip ${state.ui.dept === '영어과' ? 'active' : ''}" data-action="quick-dept" data-dept="영어과">영어과만 보기</button>
+    <button class="chip ${state.ui.dept === '국어과' ? 'active' : ''}" data-action="quick-dept" data-dept="국어과">국어과만 보기</button>
+    <details class="capacity-dropdown">
+  <summary class="chip">강의실별 수용 인원 확인</summary>
+  <div class="capacity-dropdown-panel">
+    ${ROOM_CAPACITY.map(room => `
+      <div class="capacity-row">
+        <span>${escapeHtml(room.name)}</span>
+        <strong>${room.capacity}명</strong>
+      </div>
+    `).join('')}
+  </div>
+</details>
+  </div>
+  <div class="group">
+    <label class="toggle-pill"><input type="checkbox" id="availableNowOnly" ${state.ui.availableNowOnly ? 'checked' : ''} /> 지금 비어 있는 강의실만 보기</label>
+    <label class="toggle-pill"><input type="checkbox" id="remainingTodayOnly" ${state.ui.remainingTodayOnly ? 'checked' : ''} /> 오늘 남은 빈 시간만 보기</label>
+    <label class="toggle-pill"><input type="checkbox" id="myOnly" ${state.ui.myOnly ? 'checked' : ''} /> 내가 예약한 것만 보기</label>
+    <label class="toggle-pill"><input type="checkbox" id="forceMobile" ${state.ui.forceMobile ? 'checked' : ''} /> 모바일 화면으로 보기</label>
+  </div>
+</div>
+
+<div class="toolbar-row" id="roomCapacityRow" style="display:none;">
+  <div class="card" style="width:100%; padding:14px 16px; border-radius:14px; background:#fbfdff;">
+    <div style="font-weight:700; margin-bottom:10px;">강의실별 수용 인원</div>
+    <div style="display:grid; gap:8px;">
+      ${ROOM_CAPACITY.map(room => `
+        <div style="display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid #eef2f7;">
+          <span>${escapeHtml(room.name)}</span>
+          <strong>${room.capacity}명</strong>
+        </div>
+      `).join('')}
+    </div>
+  </div>
+</div>
               </div>
             </section>
             <div class="layout-gap"></div>
@@ -911,6 +953,13 @@ const past = date < now.date || (date === now.date && timeToMinutes(slot) + slot
   saveUiState();
   render();
   return;
+
+case 'toggle-room-capacity': {
+  const row = document.getElementById('roomCapacityRow');
+  if (!row) return;
+  row.style.display = row.style.display === 'none' ? '' : 'none';
+  return;
+}
 
 case 'set-slot-minutes':
   state.ui.slotMinutes = Number(e.currentTarget.getAttribute('data-minutes')) || 30;
