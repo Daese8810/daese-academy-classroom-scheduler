@@ -269,13 +269,6 @@ function getEndTimeOptions() {
     actualMinutes
   };
 }
-        const now = new Date();
-        return {
-          date: formatDate(now),
-          time: minutesToTime(now.getHours() * 60 + (now.getMinutes() < 30 ? 0 : 30)),
-          actualMinutes: now.getHours() * 60 + now.getMinutes()
-        };
-      }
 
       function isReservationMatchingFilters(reservation, user) {
         const ui = state.ui;
