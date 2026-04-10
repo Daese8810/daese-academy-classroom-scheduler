@@ -346,26 +346,14 @@
         loginView.innerHTML = `
           <div class="login-shell">
             <div class="login-card">
-              <div class="login-left">
-                <h1>${escapeHtml(state.appName)}</h1>
-                <p>${escapeHtml(state.orgName)} 선생님들이 6층·7층 강의실과 세미나실을 함께 쓰면서, 특정 날짜와 시간대의 사용 현황을 한눈에 보고 빈 시간을 바로 예약할 수 있도록 만든 실배포용 버전입니다.</p>
-                <div class="login-stat-grid">
-                  <div class="login-stat"><strong>13</strong><span>공유 강의실</span></div>
-                  <div class="login-stat"><strong>12</strong><span>선생님 계정</span></div>
-                  <div class="login-stat"><strong>30분</strong><span>예약 단위</span></div>
-                </div>
-                <div class="help" style="color: rgba(255,255,255,0.86);">
-                  초기 계정은 요청하신 12개로 준비되어 있고, 최초 비밀번호는 <strong>1</strong>입니다. 관리자 권한은 <strong>스텐</strong> 선생님에게만 부여되어 있습니다.
-                </div>
-                <div class="account-list">
-                  ${state.users.map(u => `
-                    <div class="account-chip" data-fill-user="${escapeHtml(u.id)}">
-                      <strong>${escapeHtml(u.id)}</strong>
-                      <small>${escapeHtml(u.dept)} · ${u.role === 'admin' ? '관리자' : '선생님'}</small>
-                    </div>
-                  `).join('')}
-                </div>
-              </div>
+              <div class="login-left brand-hero">
+  <div class="brand-hero-inner">
+    <div class="brand-title">대세영어 X 대세국어</div>
+    <div class="brand-logo-wrap">
+      <img src="/daese_logo.png" alt="대세학원 로고" class="brand-logo">
+    </div>
+  </div>
+</div>
               <div class="login-right">
                 <div>
                   <h2>로그인</h2>
