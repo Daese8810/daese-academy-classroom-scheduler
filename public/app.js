@@ -373,7 +373,7 @@
                   </div>
                   <div class="login-foot">
                     <button type="submit" class="primary">예약 보드 열기</button>
-                    <span class="help">관리자: 스텐 / 최초 비밀번호: 1</span>
+                    <span class="help">최초 비밀번호: 1</span>
                   </div>
                 </form>
               </div>
