@@ -350,7 +350,7 @@
   <div class="brand-hero-inner">
     <div class="brand-title">대세영어 X 대세국어</div>
     <div class="brand-logo-wrap">
-      <img src="/daese_logo.png" alt="대세학원 로고" class="brand-logo">
+      <img src="/daese_logo.jpg" alt="대세학원 로고" class="brand-logo">
     </div>
   </div>
 </div>
