@@ -103,6 +103,9 @@ const SLOT_END = 22 * 60; // 오후 10시
         return data;
       }
 
+        function getSlotMinutes() {
+  return state.ui.slotMinutes || DEFAULT_SLOT_MINUTES;
+}
       async function loadBootstrap() {
         const data = await api('/api/bootstrap');
         state.appName = data.appName || state.appName;
@@ -200,12 +203,22 @@ const SLOT_END = 22 * 60; // 오후 10시
       }
 
       function getTimeSlots() {
-        const slots = [];
-        for (let m = SLOT_START; m < SLOT_END; m += SLOT_MINUTES) {
-          slots.push(minutesToTime(m));
-        }
-        return slots;
-      }
+  const slotMinutes = getSlotMinutes();
+  const slots = [];
+  for (let m = SLOT_START; m < SLOT_END; m += slotMinutes) {
+    slots.push(minutesToTime(m));
+  }
+  return slots;
+}
+
+function getEndTimeOptions() {
+  const slotMinutes = getSlotMinutes();
+  const slots = [];
+  for (let m = SLOT_START + slotMinutes; m <= SLOT_END; m += slotMinutes) {
+    slots.push(minutesToTime(m));
+  }
+  return slots;
+}
 
       function getEndTimeOptions() {
         const slots = [];
@@ -245,13 +258,25 @@ const SLOT_END = 22 * 60; // 오후 10시
       }
 
       function getNowInfo() {
-        if (state.summary?.now?.date && state.summary?.now?.time) {
-          return {
-            date: state.summary.now.date,
-            time: state.summary.now.time,
-            actualMinutes: timeToMinutes(state.summary.now.time)
-          };
-        }
+  if (state.summary?.now?.date && state.summary?.now?.time) {
+    return {
+      date: state.summary.now.date,
+      time: state.summary.now.time,
+      actualMinutes: timeToMinutes(state.summary.now.time)
+    };
+  }
+
+  const now = new Date();
+  const actualMinutes = now.getHours() * 60 + now.getMinutes();
+  const slotMinutes = getSlotMinutes();
+  const roundedMinutes = Math.floor(actualMinutes / slotMinutes) * slotMinutes;
+
+  return {
+    date: formatDate(now),
+    time: minutesToTime(roundedMinutes),
+    actualMinutes
+  };
+}
         const now = new Date();
         return {
           date: formatDate(now),
@@ -289,7 +314,9 @@ const SLOT_END = 22 * 60; // 오후 10시
         if (!currentWeek.includes(now.date)) return slots;
         if (dateStr < now.date) return [];
         if (dateStr > now.date) return slots;
-        return slots.filter(time => timeToMinutes(time) >= now.actualMinutes - (now.actualMinutes % 30 === 0 ? 0 : now.actualMinutes % 30) + (now.actualMinutes % 30 === 0 ? 0 : 30));
+        const slotMinutes = getSlotMinutes();
+const nextSlot = Math.ceil(now.actualMinutes / slotMinutes) * slotMinutes;
+return slots.filter(time => timeToMinutes(time) >= nextSlot);
       }
 
       function getWeekTitle(dateStr) {
@@ -430,7 +457,7 @@ const SLOT_END = 22 * 60; // 오후 10시
             <div class="app-header-inner">
               <div class="brand">
                 <h1>${escapeHtml(state.appName)}</h1>
-                <p>${escapeHtml(state.orgName)} · 6층 1~7번 강의실, 6층 세미나실, 7층 1~5번 강의실 · 30분 단위 예약</p>
+                <p>${escapeHtml(state.orgName)} · 6층 1~7번 강의실, 6층 세미나실, 7층 1~5번 강의실 · ${state.ui.slotMinutes}분 단위 예약</p>
               </div>
               <div class="user-toolbar">
                 <span class="badge ${user.role === 'admin' ? 'admin' : ''}">${escapeHtml(user.id)} · ${escapeHtml(user.dept)}${user.role === 'admin' ? ' · 관리자' : ''}</span>
@@ -536,10 +563,15 @@ const SLOT_END = 22 * 60; // 오후 10시
                     <p>${escapeHtml(getBoardHintText(user))}</p>
                   </div>
                   <div class="chip-row">
-                    <span class="inline-note">예약 단위 30분</span>
-                    <span class="inline-note">반복 예약 지원</span>
-                    <span class="inline-note">모바일 보기 ${mobileMode ? '활성' : '비활성'}</span>
-                  </div>
+  <button class="chip ${state.ui.slotMinutes === 30 ? 'active' : ''}" data-action="set-slot-minutes" data-minutes="30">
+    예약 단위 30분
+  </button>
+  <button class="chip ${state.ui.slotMinutes === 60 ? 'active' : ''}" data-action="set-slot-minutes" data-minutes="60">
+    예약 단위 1시간
+  </button>
+  <span class="inline-note">반복 예약 지원</span>
+  <span class="inline-note">모바일 보기 ${mobileMode ? '활성' : '비활성'}</span>
+</div>
                 </div>
                 <div class="board-wrap" id="boardWrap">
                   ${mobileMode ? renderMobileBoard(user) : renderBoard(user)}
@@ -652,8 +684,10 @@ const SLOT_END = 22 * 60; // 오후 10시
               html += renderReservationCell(reservation, span, user);
               i += span;
             } else {
-              const isNow = date === now.date && timeToMinutes(slot) <= now.actualMinutes && now.actualMinutes < timeToMinutes(slot) + SLOT_MINUTES;
-              const past = date < now.date || (date === now.date && timeToMinutes(slot) + SLOT_MINUTES <= now.actualMinutes);
+              const slotMinutes = getSlotMinutes();
+const isNow = date === now.date && timeToMinutes(slot) <= now.actualMinutes && now.actualMinutes < timeToMinutes(slot) + slotMinutes;
+              const slotMinutes = getSlotMinutes();
+const past = date < now.date || (date === now.date && timeToMinutes(slot) + slotMinutes <= now.actualMinutes);
               html += `<td class="empty-slot ${isNow ? 'now-marker' : ''} ${past ? 'past-slot' : ''}" data-action="new-reservation-cell" data-room-id="${escapeHtml(room.id)}" data-date="${escapeHtml(date)}" data-start="${escapeHtml(slot)}"></td>`;
               i += 1;
             }
@@ -888,10 +922,16 @@ const SLOT_END = 22 * 60; // 오후 10시
             return;
           }
           case 'quick-dept':
-            state.ui.dept = e.currentTarget.getAttribute('data-dept') || 'all';
-            saveUiState();
-            render();
-            return;
+  state.ui.dept = e.currentTarget.getAttribute('data-dept') || 'all';
+  saveUiState();
+  render();
+  return;
+
+case 'set-slot-minutes':
+  state.ui.slotMinutes = Number(e.currentTarget.getAttribute('data-minutes')) || 30;
+  saveUiState();
+  render();
+  return;
           case 'new-reservation':
             openReservationModal({
               mode: 'create',
@@ -1019,7 +1059,7 @@ const SLOT_END = 22 * 60; // 오후 10시
         openModal(`
           <div class="modal">
             <h2>${isEdit ? '예약 수정' : '새 예약 만들기'}</h2>
-            <p class="sub">빈 시간은 바로 예약할 수 있고, 반복 예약은 매주 같은 시간대로 한 번에 넣을 수 있습니다.</p>
+            <p class="sub">빈 시간은 바로 예약할 수 있고, 반복 예약은 매주 같은 시간대로 한 번에 넣을 수 있습니다. 현재 예약 단위는 ${getSlotMinutes()}분입니다.</p>
             <form id="reservationForm" class="modal-grid">
               <div class="field">
                 <label for="resDate">날짜</label>
