@@ -4,10 +4,11 @@
 const SLOT_END = 22 * 60; // 오후 10시
       const DEFAULT_SLOT_MINUTES = 30;
       const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
-      const VIEW_MODES = {
-        week: '주간 보기',
-        day: '일간 보기'
-      };
+     const VIEW_MODES = {
+  week: '주간 보기',
+  weekend: '주말 보기',
+  day: '일간 보기'
+};
 
       const loginView = document.getElementById('loginView');
       const appView = document.getElementById('appView');
@@ -132,12 +133,9 @@ const ROOM_CAPACITY = [
       }
 
       function getReservationFetchRange() {
-        if (state.ui.viewMode === 'day') {
-          return { start: state.ui.selectedDate, end: state.ui.selectedDate };
-        }
-        const weekDates = getWeekDates(state.ui.selectedDate);
-        return { start: weekDates[0], end: weekDates[6] };
-      }
+  const dates = getBoardDates(state.ui.selectedDate);
+  return { start: dates[0], end: dates[dates.length - 1] };
+}
 
       async function refreshBoardData() {
         if (!state.me) {
@@ -203,9 +201,20 @@ const ROOM_CAPACITY = [
       }
 
       function getWeekDates(dateStr) {
-        const weekStart = getWeekStart(parseDate(dateStr));
-        return Array.from({ length: 7 }, (_, i) => formatDate(addDays(weekStart, i)));
-      }
+  const weekStart = getWeekStart(parseDate(dateStr));
+  return Array.from({ length: 7 }, (_, i) => formatDate(addDays(weekStart, i)));
+}
+
+function getWeekendDates(dateStr) {
+  const weekDates = getWeekDates(dateStr);
+  return [weekDates[5], weekDates[6]]; // 토, 일
+}
+
+function getBoardDates(dateStr = state.ui.selectedDate) {
+  if (state.ui.viewMode === 'day') return [dateStr];
+  if (state.ui.viewMode === 'weekend') return getWeekendDates(dateStr);
+  return getWeekDates(dateStr);
+}
 
       function timeToMinutes(timeStr) {
         const [h, m] = timeStr.split(':').map(Number);
@@ -321,11 +330,18 @@ return slots.filter(time => timeToMinutes(time) >= nextSlot);
       }
 
       function getWeekTitle(dateStr) {
-        const weekDates = getWeekDates(dateStr);
-        const first = parseDate(weekDates[0]);
-        const last = parseDate(weekDates[6]);
-        return `${first.getFullYear()}년 ${first.getMonth() + 1}월 ${first.getDate()}일 ~ ${last.getMonth() + 1}월 ${last.getDate()}일`;
-      }
+  const weekDates = getWeekDates(dateStr);
+  const first = parseDate(weekDates[0]);
+  const last = parseDate(weekDates[6]);
+  return `${first.getFullYear()}년 ${first.getMonth() + 1}월 ${first.getDate()}일 ~ ${last.getMonth() + 1}월 ${last.getDate()}일`;
+}
+
+function getWeekendTitle(dateStr) {
+  const weekendDates = getWeekendDates(dateStr);
+  const first = parseDate(weekendDates[0]);
+  const last = parseDate(weekendDates[1]);
+  return `${first.getFullYear()}년 ${first.getMonth() + 1}월 ${first.getDate()}일 ~ ${last.getMonth() + 1}월 ${last.getDate()}일`;
+}
 
       function getAvailableRoomsNow() {
         return Array.isArray(state.summary.availableNow) ? state.summary.availableNow : [];
@@ -443,15 +459,35 @@ return slots.filter(time => timeToMinutes(time) >= nextSlot);
         const user = getCurrentUser();
         if (!user) return;
         const now = getNowInfo();
-        const selectedDate = state.ui.selectedDate;
-        const weekDates = getWeekDates(selectedDate);
-        const availableNow = getAvailableRoomsNow(isToday(selectedDate) ? selectedDate : now.date);
-        const myUpcoming = getUpcomingMine(user);
-        const remainingFree = getRemainingFreeBlocksToday();
-        const mobileMode = state.ui.forceMobile || window.innerWidth < 900;
-        const boardTitle = state.ui.viewMode === 'week'
-          ? `${getWeekTitle(selectedDate)} · 주간 시간표`
-          : `${formatDateLong(selectedDate)} · 일간 시간표`;
+const selectedDate = state.ui.selectedDate;
+const availableNow = getAvailableRoomsNow(isToday(selectedDate) ? selectedDate : now.date);
+const myUpcoming = getUpcomingMine(user);
+const remainingFree = getRemainingFreeBlocksToday();
+const mobileMode = state.ui.forceMobile || window.innerWidth < 900;
+
+const rangeTitle = state.ui.viewMode === 'week'
+  ? getWeekTitle(selectedDate)
+  : state.ui.viewMode === 'weekend'
+    ? getWeekendTitle(selectedDate)
+    : formatDateLong(selectedDate);
+
+const prevLabel = state.ui.viewMode === 'week'
+  ? '◀ 이전 주'
+  : state.ui.viewMode === 'weekend'
+    ? '◀ 이전 주말'
+    : '◀ 이전 날';
+
+const nextLabel = state.ui.viewMode === 'week'
+  ? '다음 주 ▶'
+  : state.ui.viewMode === 'weekend'
+    ? '다음 주말 ▶'
+    : '다음 날 ▶';
+
+const boardTitle = state.ui.viewMode === 'week'
+  ? `${rangeTitle} · 주간 시간표`
+  : state.ui.viewMode === 'weekend'
+    ? `${rangeTitle} · 주말 시간표`
+    : `${rangeTitle} · 일간 시간표`;
 
         appView.innerHTML = `
           <header class="app-header">
@@ -480,9 +516,9 @@ return slots.filter(time => timeToMinutes(time) >= nextSlot);
             <section class="card toolbar-card">
               <div class="toolbar-row">
                 <div class="group">
-                  <button data-action="move-date" data-step="-1">${state.ui.viewMode === 'week' ? '◀ 이전 주' : '◀ 이전 날'}</button>
-                  <input type="date" id="selectedDateInput" value="${escapeHtml(state.ui.selectedDate)}" />
-                  <button data-action="move-date" data-step="1">${state.ui.viewMode === 'week' ? '다음 주 ▶' : '다음 날 ▶'}</button>
+                  <button data-action="move-date" data-step="-1">${escapeHtml(prevLabel)}</button>
+<input type="date" id="selectedDateInput" value="${escapeHtml(state.ui.selectedDate)}" />
+<button data-action="move-date" data-step="1">${escapeHtml(nextLabel)}</button>
                   <button class="ghost" data-action="go-today">오늘로</button>
                 </div>
                 <div class="group legend">
@@ -509,9 +545,10 @@ return slots.filter(time => timeToMinutes(time) >= nextSlot);
                     <option value="국어과" ${state.ui.dept === '국어과' ? 'selected' : ''}>국어과만 보기</option>
                   </select>
                   <select id="viewModeSelect">
-                    <option value="week" ${state.ui.viewMode === 'week' ? 'selected' : ''}>주간 보기</option>
-                    <option value="day" ${state.ui.viewMode === 'day' ? 'selected' : ''}>일간 보기</option>
-                  </select>
+  <option value="week" ${state.ui.viewMode === 'week' ? 'selected' : ''}>주간 보기</option>
+  <option value="weekend" ${state.ui.viewMode === 'weekend' ? 'selected' : ''}>주말 보기</option>
+  <option value="day" ${state.ui.viewMode === 'day' ? 'selected' : ''}>일간 보기</option>
+</select>
                 </div>
                 <div class="group">
                   <button class="primary" data-action="new-reservation">+ 빈 시간 예약</button>
@@ -563,7 +600,7 @@ return slots.filter(time => timeToMinutes(time) >= nextSlot);
               <div class="card summary-card">
                 <h3>선택 기준</h3>
                 <strong>${escapeHtml(VIEW_MODES[state.ui.viewMode])}</strong>
-                <p>${state.ui.viewMode === 'week' ? escapeHtml(getWeekTitle(selectedDate)) : escapeHtml(formatDateLong(selectedDate))}</p>
+                <p>${escapeHtml(rangeTitle)}</p>
               </div>
               <div class="card summary-card">
                 <h3>지금 비어 있는 강의실</h3>
@@ -655,12 +692,14 @@ return slots.filter(time => timeToMinutes(time) >= nextSlot);
       }
 
       function renderBoard(user) {
-        return state.ui.viewMode === 'week' ? renderWeekBoard(user) : renderDayBoard(user, state.ui.selectedDate);
-      }
+  return state.ui.viewMode === 'day'
+    ? renderDayBoard(user, state.ui.selectedDate)
+    : renderWeekBoard(user);
+}
 
-      function renderWeekBoard(user) {
-        const dates = getWeekDates(state.ui.selectedDate);
-        const visibleRooms = getVisibleRooms(state.ui.selectedDate);
+function renderWeekBoard(user) {
+  const dates = getBoardDates(state.ui.selectedDate);
+  const visibleRooms = getVisibleRooms(state.ui.selectedDate);
         if (!visibleRooms.length) {
           return '<div class="empty-state" style="margin: 16px;">현재 필터 조건에 맞는 강의실이 없습니다.</div>';
         }
@@ -798,23 +837,28 @@ const past = date < now.date || (date === now.date && timeToMinutes(slot) + slot
       }
 
       function renderMobileBoard(user) {
-        const weekDates = getWeekDates(state.ui.selectedDate);
-        if (!weekDates.includes(state.ui.mobileSelectedDate)) {
-          state.ui.mobileSelectedDate = state.ui.selectedDate;
-        }
-        const targetDate = state.ui.viewMode === 'day' ? state.ui.selectedDate : state.ui.mobileSelectedDate;
-        const visibleRooms = getVisibleRooms(targetDate);
-        if (!visibleRooms.length) {
-          return '<div class="mobile-board"><div class="empty-state">현재 필터 조건에 맞는 강의실이 없습니다.</div></div>';
-        }
-        const now = getNowInfo();
-        return `
-          <div class="mobile-board">
-            ${state.ui.viewMode === 'week' ? `
-              <div class="mobile-day-tabs">
-                ${weekDates.map(date => `<button class="mobile-tab ${state.ui.mobileSelectedDate === date ? 'active' : ''}" data-action="mobile-select-date" data-date="${escapeHtml(date)}">${escapeHtml(formatDateLabel(date))}</button>`).join('')}
-              </div>
-            ` : ''}
+  const visibleDates = getBoardDates(state.ui.selectedDate);
+
+  if (state.ui.viewMode !== 'day' && !visibleDates.includes(state.ui.mobileSelectedDate)) {
+    state.ui.mobileSelectedDate = visibleDates[0];
+  }
+
+  const targetDate = state.ui.viewMode === 'day'
+    ? state.ui.selectedDate
+    : state.ui.mobileSelectedDate;
+
+  const visibleRooms = getVisibleRooms(targetDate);
+  if (!visibleRooms.length) {
+    return '<div class="mobile-board"><div class="empty-state">현재 필터 조건에 맞는 강의실이 없습니다.</div></div>';
+  }
+  const now = getNowInfo();
+  return `
+    <div class="mobile-board">
+      ${state.ui.viewMode !== 'day' ? `
+        <div class="mobile-day-tabs">
+          ${visibleDates.map(date => `<button class="mobile-tab ${state.ui.mobileSelectedDate === date ? 'active' : ''}" data-action="mobile-select-date" data-date="${escapeHtml(date)}">${escapeHtml(formatDateLabel(date))}</button>`).join('')}
+        </div>
+      ` : ''}
             ${visibleRooms.map(room => {
               const reservations = getReservationsForRoomDate(room.id, targetDate);
               const activeNow = reservations.find(r => timeToMinutes(r.start) <= now.actualMinutes && now.actualMinutes < timeToMinutes(r.end) && targetDate === now.date);
@@ -936,7 +980,9 @@ const past = date < now.date || (date === now.date && timeToMinutes(slot) + slot
             return;
           case 'move-date': {
             const step = Number(e.currentTarget.getAttribute('data-step')) || 0;
-            const delta = state.ui.viewMode === 'week' ? step * 7 : step;
+            const delta = (state.ui.viewMode === 'week' || state.ui.viewMode === 'weekend')
+  ? step * 7
+  : step;
             state.ui.selectedDate = formatDate(addDays(parseDate(state.ui.selectedDate), delta));
             state.ui.mobileSelectedDate = state.ui.selectedDate;
             saveUiState();
