@@ -1139,8 +1139,8 @@ case 'set-slot-minutes':
                 </div>
               `}
               <div class="field full">
-                <label for="resTitle">용도 / 제목</label>
-                <input id="resTitle" type="text" value="${escapeHtml(existing?.title || '')}" placeholder="예: 영어 독해, 국어 논술, 학과 회의" required />
+                <label for="resTitle">용도</label>
+                <input id="resTitle" type="text" value="${escapeHtml(existing?.title || '')}" placeholder="예: 직보, 클리닉, 회의, 상담" required />
               </div>
               <div class="field full">
                 <label for="resNote">메모</label>
