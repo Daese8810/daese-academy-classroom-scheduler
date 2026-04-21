@@ -621,7 +621,9 @@ app.post('/api/reservations', requireAuth, async (req, res, next) => {
     if (!title) return jsonError(res, 400, '용도 / 제목을 입력해 주세요.');
     if (!['usage', 'event', 'blocked'].includes(category)) return jsonError(res, 400, '예약 구분이 올바르지 않습니다.');
     if (category === 'blocked' && req.user.role !== 'admin') return jsonError(res, 403, '관리자만 차단 일정을 만들 수 있습니다.');
-    if (!Number.isInteger(repeatCount) || repeatCount < 1 || repeatCount > 12) return jsonError(res, 400, '반복 횟수는 1~12회만 가능합니다.');
+    if (!Number.isInteger(repeatCount) || repeatCount < 1 || !((repeatCount >= 1 && repeatCount <= 12) || repeatCount === 52)) {
+  return jsonError(res, 400, '반복 횟수는 1~12회 또는 52회만 가능합니다.');
+}
 
     const [room, owner] = await Promise.all([findRoomByCode(roomCode), findTeacherByLoginId(ownerLoginId)]);
     if (!room) return jsonError(res, 404, '강의실을 찾을 수 없습니다.');
