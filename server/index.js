@@ -330,8 +330,8 @@ async function ensureRecurringSchema() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS reservation_recurring_series (
       id uuid PRIMARY KEY,
-      room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-      teacher_id uuid NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+      room_id BIGINT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      teacher_id BIGINT NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
       weekday smallint NOT NULL CHECK (weekday BETWEEN 0 AND 6),
       category text NOT NULL,
       title text NOT NULL,
@@ -340,8 +340,8 @@ async function ensureRecurringSchema() {
       end_time time NOT NULL,
       start_date date NOT NULL,
       repeat_until date NULL,
-      created_by_teacher_id uuid REFERENCES teachers(id) ON DELETE SET NULL,
-      updated_by_teacher_id uuid REFERENCES teachers(id) ON DELETE SET NULL,
+      created_by_teacher_id BIGINT REFERENCES teachers(id) ON DELETE SET NULL,
+      updated_by_teacher_id BIGINT REFERENCES teachers(id) ON DELETE SET NULL,
       created_at timestamptz NOT NULL DEFAULT NOW(),
       updated_at timestamptz NOT NULL DEFAULT NOW()
     )
@@ -351,7 +351,7 @@ async function ensureRecurringSchema() {
     CREATE TABLE IF NOT EXISTS reservation_recurring_exceptions (
       series_id uuid NOT NULL REFERENCES reservation_recurring_series(id) ON DELETE CASCADE,
       occurrence_date date NOT NULL,
-      created_by_teacher_id uuid REFERENCES teachers(id) ON DELETE SET NULL,
+      created_by_teacher_id BIGINT REFERENCES teachers(id) ON DELETE SET NULL,
       created_at timestamptz NOT NULL DEFAULT NOW(),
       PRIMARY KEY (series_id, occurrence_date)
     )
@@ -361,10 +361,12 @@ async function ensureRecurringSchema() {
     CREATE INDEX IF NOT EXISTS reservation_recurring_series_room_idx
       ON reservation_recurring_series (room_id, weekday, start_date, repeat_until)
   `);
+
   await pool.query(`
     CREATE INDEX IF NOT EXISTS reservation_recurring_series_teacher_idx
       ON reservation_recurring_series (teacher_id, start_date)
   `);
+
   await pool.query(`
     CREATE INDEX IF NOT EXISTS reservations_source_series_idx
       ON reservations (source_series_id, source_occurrence_date)
