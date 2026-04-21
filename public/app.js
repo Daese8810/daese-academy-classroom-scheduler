@@ -3,8 +3,6 @@
       const SLOT_START = 9 * 60;
 const SLOT_END = 22 * 60; // 오후 10시
       const DEFAULT_SLOT_MINUTES = 30;
-      const REPEAT_COUNT_DEFAULT = 4;
-      const REPEAT_FOREVER_VALUE = 'weekly_forever';
       const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
      const VIEW_MODES = {
   week: '주간 보기',
@@ -387,29 +385,6 @@ function getWeekendTitle(dateStr) {
         if (category === 'event') return 'res-event';
         if (category === 'blocked') return 'res-blocked';
         return 'res-usage';
-      }
-
-      function isForeverRecurringReservation(reservation) {
-        return !!reservation?.recurringGroupId && reservation.repeatMode === REPEAT_FOREVER_VALUE;
-      }
-
-      function getRecurringReservationLabel(reservation) {
-        if (!reservation?.recurringGroupId) return '';
-        if (isForeverRecurringReservation(reservation)) return '반복 예약 · 매주(취소 전까지)';
-
-        const explicitTotal = Number(
-          reservation?.recurringTotalCount ??
-          reservation?.repeatTotalCount ??
-          reservation?.repeatCount ??
-          0
-        );
-
-        if (Number.isFinite(explicitTotal) && explicitTotal > 0) {
-          return `반복 예약 총 ${explicitTotal}회`;
-        }
-
-        const visibleCount = state.reservations.filter(r => r.recurringGroupId === reservation.recurringGroupId).length;
-        return `반복 예약 ${visibleCount}건`;
       }
 
       function renderLogin() {
@@ -1157,12 +1132,9 @@ case 'set-slot-minutes':
         const defaultEnd = endOptions.find(time => timeToMinutes(time) > timeToMinutes(startValue)) || endOptions[endOptions.length - 1];
         const endValue = existing?.end || defaultEnd;
         const recurring = !!existing?.recurringGroupId;
-        const foreverRecurring = isForeverRecurringReservation(existing);
         const ownerValue = existing?.ownerId || user.id;
         const deptValue = getUser(ownerValue)?.dept || user.dept;
-        const repeatSelectionDefault = foreverRecurring
-          ? REPEAT_FOREVER_VALUE
-          : String(existing?.repeatCount || REPEAT_COUNT_DEFAULT);
+        const repeatCountDefault = 4;
 
         openModal(`
           <div class="modal">
@@ -1222,15 +1194,13 @@ case 'set-slot-minutes':
               </div>
               <div class="field full">
                 <label class="toggle-pill" style="width: fit-content;"><input type="checkbox" id="repeatWeekly" ${isEdit ? 'disabled' : ''} ${recurring ? 'checked' : ''}/> 매주 반복 예약</label>
-                <div class="help">체크하면 같은 요일·같은 시간으로 반복 예약을 생성합니다. 1회~12회 또는 ‘매주’를 선택할 수 있고, ‘매주’를 선택하면 취소하기 전까지 계속 반복됩니다.${isEdit ? ' 수정 화면에서는 개별 일정만 변경됩니다.' : ''}</div>
+                <div class="help">체크하면 같은 요일·같은 시간으로 다음 주들까지 한 번에 생성합니다. 관리자 차단도 반복 생성할 수 있습니다.${isEdit ? ' 수정 화면에서는 개별 일정만 변경됩니다.' : ''}</div>
               </div>
               <div class="field full" id="repeatCountField" style="${(isEdit || !recurring) ? 'display:none;' : ''}">
-                <label for="repeatCount">반복 설정</label>
+                <label for="repeatCount">반복 횟수</label>
                 <select id="repeatCount">
-                  ${Array.from({ length: 12 }, (_, i) => i + 1).map(n => `<option value="${n}" ${String(n) === repeatSelectionDefault ? 'selected' : ''}>${n}회</option>`).join('')}
-                  <option value="${REPEAT_FOREVER_VALUE}" ${repeatSelectionDefault === REPEAT_FOREVER_VALUE ? 'selected' : ''}>매주</option>
+                  ${Array.from({ length: 12 }, (_, i) => i + 1).map(n => `<option value="${n}" ${n === repeatCountDefault ? 'selected' : ''}>총 ${n}회</option>`).join('')}
                 </select>
-                <div class="help">‘매주’를 선택하면 취소하기 전까지 같은 요일·같은 시간으로 반복 예약이 유지됩니다.</div>
               </div>
               <div class="modal-actions full">
                 <button type="button" data-modal-close>취소</button>
@@ -1243,13 +1213,9 @@ case 'set-slot-minutes':
           const endSelect = modal.querySelector('#resEnd');
           const repeatToggle = modal.querySelector('#repeatWeekly');
           const repeatCountField = modal.querySelector('#repeatCountField');
-          const repeatCountSelect = modal.querySelector('#repeatCount');
           if (repeatToggle) {
             repeatToggle.addEventListener('change', () => {
               repeatCountField.style.display = repeatToggle.checked ? '' : 'none';
-              if (repeatToggle.checked && repeatCountSelect && !repeatCountSelect.value) {
-                repeatCountSelect.value = String(REPEAT_COUNT_DEFAULT);
-              }
             });
           }
           startSelect.addEventListener('change', () => {
@@ -1270,10 +1236,7 @@ case 'set-slot-minutes':
             const note = modal.querySelector('#resNote').value.trim();
             const category = modal.querySelector('#resCategory').value;
             const ownerId = user.role === 'admin' ? modal.querySelector('#resOwner').value : user.id;
-            const repeatEnabled = !isEdit && repeatToggle && repeatToggle.checked;
-            const repeatValue = repeatEnabled && repeatCountSelect ? repeatCountSelect.value : '1';
-            const isForeverRepeat = repeatValue === REPEAT_FOREVER_VALUE;
-            const repeatCount = repeatEnabled && !isForeverRepeat ? Number(repeatValue) : 1;
+            const repeatCount = !isEdit && repeatToggle && repeatToggle.checked ? Number(modal.querySelector('#repeatCount').value) : 1;
 
             if (!date || !roomId || !start || !end || !title) {
               showToast('날짜, 강의실, 시간, 용도를 모두 입력해 주세요.', 'error');
@@ -1293,8 +1256,7 @@ case 'set-slot-minutes':
               note,
               category,
               ownerId,
-              repeatCount: isForeverRepeat ? null : repeatCount,
-              ...(isForeverRepeat ? { repeatMode: REPEAT_FOREVER_VALUE } : {})
+              repeatCount
             };
 
             try {
@@ -1309,15 +1271,7 @@ case 'set-slot-minutes':
                   method: 'POST',
                   body: payload
                 });
-                if (isForeverRepeat) {
-                  if (result.insertedCount) {
-                    showToast(`${result.insertedCount}건의 예약과 매주 반복 설정을 저장했습니다.`, 'success');
-                  } else {
-                    showToast('매주 반복 예약을 저장했습니다. 취소 전까지 매주 반복됩니다.', 'success');
-                  }
-                } else {
-                  showToast(`${result.insertedCount || repeatCount}건의 예약을 저장했습니다.`, 'success');
-                }
+                showToast(`${result.insertedCount || repeatCount}건의 예약을 저장했습니다.`, 'success');
               }
               await refreshAllData();
               closeModal();
@@ -1339,20 +1293,15 @@ case 'set-slot-minutes':
         const room = getRoom(reservation.roomId);
         const owner = getUser(reservation.ownerId);
         const canEdit = canEditReservation(reservation, user);
-        const recurringLabel = getRecurringReservationLabel(reservation);
-        const foreverRecurring = isForeverRecurringReservation(reservation);
-        const deleteSeriesButtonLabel = foreverRecurring ? '매주 반복 종료' : '반복 예약 전체 취소';
-        const deleteSeriesConfirmMessage = foreverRecurring
-          ? '이 반복 예약을 종료할까요? 선택한 일정 이후로는 더 이상 생성되지 않습니다.'
-          : '반복 예약 전체를 취소할까요?';
+        const seriesCount = reservation.recurringGroupId ? state.reservations.filter(r => r.recurringGroupId === reservation.recurringGroupId).length : 0;
         openModal(`
           <div class="modal">
             <h2>${escapeHtml(reservation.title)}</h2>
-            <p class="sub">예약 상세 정보입니다. ${foreverRecurring ? '이 예약은 취소 전까지 매주 반복됩니다. ' : ''}${canEdit ? '권한이 있어 수정·취소할 수 있습니다.' : '이 예약은 조회만 가능합니다.'}</p>
+            <p class="sub">예약 상세 정보입니다. ${canEdit ? '권한이 있어 수정·취소할 수 있습니다.' : '이 예약은 조회만 가능합니다.'}</p>
             <div>
               <span class="inline-note">${escapeHtml(getCategoryLabel(reservation.category))}</span>
               <span class="inline-note">${escapeHtml(owner?.dept || reservation.ownerDept)}</span>
-              ${recurringLabel ? `<span class="inline-note">${escapeHtml(recurringLabel)}</span>` : ''}
+              ${reservation.recurringGroupId ? `<span class="inline-note">반복 예약 ${seriesCount}건</span>` : ''}
             </div>
             <div class="detail-grid">
               <div class="item"><strong>강의실</strong>${escapeHtml(room?.name || '')}</div>
@@ -1366,7 +1315,7 @@ case 'set-slot-minutes':
               <button type="button" data-modal-close>닫기</button>
               ${canEdit ? `<button type="button" class="ghost" id="editReservationBtn">수정</button>` : ''}
               ${canEdit ? `<button type="button" class="warn" id="deleteReservationBtn">이번 일정 취소</button>` : ''}
-              ${canEdit && reservation.recurringGroupId ? `<button type="button" class="warn" id="deleteSeriesBtn">${deleteSeriesButtonLabel}</button>` : ''}
+              ${canEdit && reservation.recurringGroupId ? `<button type="button" class="warn" id="deleteSeriesBtn">반복 예약 전체 취소</button>` : ''}
             </div>
           </div>
         `, (modal) => {
@@ -1388,18 +1337,15 @@ case 'set-slot-minutes':
               }
             });
             modal.querySelector('#deleteSeriesBtn')?.addEventListener('click', async () => {
-              if (!confirm(deleteSeriesConfirmMessage)) return;
+              if (!confirm('반복 예약 전체를 취소할까요?')) return;
               try {
-                const deleteUrl = foreverRecurring
-                  ? `/api/reservations/${encodeURIComponent(reservation.id)}?scope=series&mode=stop&stopFrom=${encodeURIComponent(reservation.date)}`
-                  : `/api/reservations/${encodeURIComponent(reservation.id)}?scope=series`;
-                await api(deleteUrl, { method: 'DELETE' });
+                await api(`/api/reservations/${encodeURIComponent(reservation.id)}?scope=series`, { method: 'DELETE' });
                 await refreshAllData();
                 closeModal();
-                showToast(foreverRecurring ? '매주 반복 예약을 종료했습니다.' : '반복 예약 전체를 취소했습니다.', 'success');
+                showToast('반복 예약 전체를 취소했습니다.', 'success');
                 render();
               } catch (error) {
-                showToast(error.message || (foreverRecurring ? '매주 반복 예약을 종료하지 못했습니다.' : '반복 예약 전체를 취소하지 못했습니다.'), 'error');
+                showToast(error.message || '반복 예약 전체를 취소하지 못했습니다.', 'error');
               }
             });
           }
