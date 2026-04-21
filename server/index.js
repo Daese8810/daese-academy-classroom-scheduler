@@ -9,12 +9,10 @@ const APP_URL = process.env.APP_URL || '';
 const COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'daese_session';
 const SESSION_DAYS = Number(process.env.SESSION_DAYS || 14);
 const SLOT_START = 9 * 60;
-const SLOT_END = 22 * 60;
+const SLOT_END = 18 * 60;
 const SLOT_MINUTES = 30;
 const SEOUL_OFFSET = '+09:00';
 const SEOUL_TZ = 'Asia/Seoul';
-const REPEAT_MODE_WEEKLY_FOREVER = 'weekly_forever';
-const UPCOMING_LOOKAHEAD_DAYS = Number(process.env.UPCOMING_LOOKAHEAD_DAYS || 180);
 
 if (!DATABASE_URL) {
   console.error('DATABASE_URL 환경 변수가 필요합니다.');
@@ -112,18 +110,8 @@ function addDays(dateStr, amount) {
   return dt.toISOString().slice(0, 10);
 }
 
-function getWeekday(dateStr) {
-  const [y, m, d] = String(dateStr).split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-}
-
-function alignDateToWeekdayOnOrAfter(dateStr, weekday) {
-  const diff = (weekday - getWeekday(dateStr) + 7) % 7;
-  return addDays(dateStr, diff);
-}
-
 function parseTimeToMinutes(timeStr) {
-  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(timeStr));
+  const m = /^([01]\d|2[0-3]):([03]0)$/.exec(String(timeStr));
   if (!m) return null;
   return Number(m[1]) * 60 + Number(m[2]);
 }
@@ -133,12 +121,6 @@ function isValidSlotTime(timeStr, allowEnd = false) {
   if (minutes === null) return false;
   if (allowEnd && minutes === SLOT_END) return true;
   return minutes >= SLOT_START && minutes < SLOT_END && minutes % SLOT_MINUTES === 0;
-}
-
-function minutesToTime(minutes) {
-  const h = String(Math.floor(minutes / 60)).padStart(2, '0');
-  const m = String(minutes % 60).padStart(2, '0');
-  return `${h}:${m}`;
 }
 
 function toKstTimestamp(dateStr, timeStr) {
@@ -177,11 +159,6 @@ function roomPublic(row) {
 }
 
 function reservationPublic(row) {
-  const repeatTotalCount = row.repeat_total_count !== undefined && row.repeat_total_count !== null && row.repeat_total_count !== ''
-    ? Number(row.repeat_total_count)
-    : null;
-  const recurringGroupId = row.source_series_id || row.repeat_group_id || null;
-  const repeatMode = row.repeat_mode || (row.source_series_id ? REPEAT_MODE_WEEKLY_FOREVER : null);
   return {
     id: row.id,
     date: row.date,
@@ -193,79 +170,7 @@ function reservationPublic(row) {
     start: row.start_time,
     end: row.end_time,
     category: row.category,
-    recurringGroupId,
-    repeatMode,
-    repeatCount: repeatTotalCount,
-    recurringTotalCount: repeatTotalCount,
-    sourceSeriesId: row.source_series_id || null,
-    sourceOccurrenceDate: row.source_occurrence_date || null,
-    createdAt: row.created_at,
-  };
-}
-
-function compareReservations(a, b) {
-  return (
-    String(a.date || '').localeCompare(String(b.date || '')) ||
-    String(a.start || '').localeCompare(String(b.start || '')) ||
-    String(a.roomId || '').localeCompare(String(b.roomId || '')) ||
-    String(a.createdAt || '').localeCompare(String(b.createdAt || '')) ||
-    String(a.id || '').localeCompare(String(b.id || ''))
-  );
-}
-
-function isReservationUpcoming(reservation, now) {
-  if (reservation.date > now.date) return true;
-  if (reservation.date < now.date) return false;
-  return parseTimeToMinutes(reservation.end) > now.actualMinutes;
-}
-
-function buildConflictResponse(conflict) {
-  return {
-    date: conflict.date,
-    start: conflict.start_time,
-    end: conflict.end_time,
-    room: conflict.short_name,
-    title: conflict.title,
-    ownerId: conflict.owner_id,
-  };
-}
-
-function pickEarlierConflict(a, b) {
-  if (!a) return b;
-  if (!b) return a;
-  if (String(a.date) !== String(b.date)) return String(a.date) < String(b.date) ? a : b;
-  if (String(a.start_time) !== String(b.start_time)) return String(a.start_time) <= String(b.start_time) ? a : b;
-  return a;
-}
-
-function makeSeriesOccurrenceId(seriesId, occurrenceDate) {
-  return `series:${seriesId}:${occurrenceDate}`;
-}
-
-function parseSeriesOccurrenceId(value) {
-  const m = /^series:([0-9a-fA-F-]{36}):(\d{4}-\d{2}-\d{2})$/.exec(String(value || ''));
-  if (!m) return null;
-  return { seriesId: m[1], occurrenceDate: m[2] };
-}
-
-function buildSeriesOccurrencePublic(row, occurrenceDate) {
-  return {
-    id: makeSeriesOccurrenceId(row.id, occurrenceDate),
-    date: occurrenceDate,
-    roomId: row.room_id,
-    ownerId: row.owner_id,
-    ownerDept: row.owner_dept,
-    title: row.title,
-    note: row.note || '',
-    start: row.start_time,
-    end: row.end_time,
-    category: row.category,
-    recurringGroupId: row.id,
-    repeatMode: REPEAT_MODE_WEEKLY_FOREVER,
-    repeatCount: null,
-    recurringTotalCount: null,
-    sourceSeriesId: row.id,
-    sourceOccurrenceDate: occurrenceDate,
+    recurringGroupId: row.repeat_group_id || null,
     createdAt: row.created_at,
   };
 }
@@ -320,57 +225,6 @@ function clearSessionCookie(res, req) {
   res.setHeader('Set-Cookie', [`${COOKIE_NAME}=`, ...parts, 'Expires=Thu, 01 Jan 1970 00:00:00 GMT'].join('; '));
 }
 
-async function ensureRecurringSchema() {
-  await pool.query(`
-    ALTER TABLE reservations
-      ADD COLUMN IF NOT EXISTS source_series_id uuid,
-      ADD COLUMN IF NOT EXISTS source_occurrence_date date
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS reservation_recurring_series (
-      id uuid PRIMARY KEY,
-      room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-      teacher_id uuid NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
-      weekday smallint NOT NULL CHECK (weekday BETWEEN 0 AND 6),
-      category text NOT NULL,
-      title text NOT NULL,
-      note text,
-      start_time time NOT NULL,
-      end_time time NOT NULL,
-      start_date date NOT NULL,
-      repeat_until date NULL,
-      created_by_teacher_id uuid REFERENCES teachers(id) ON DELETE SET NULL,
-      updated_by_teacher_id uuid REFERENCES teachers(id) ON DELETE SET NULL,
-      created_at timestamptz NOT NULL DEFAULT NOW(),
-      updated_at timestamptz NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS reservation_recurring_exceptions (
-      series_id uuid NOT NULL REFERENCES reservation_recurring_series(id) ON DELETE CASCADE,
-      occurrence_date date NOT NULL,
-      created_by_teacher_id uuid REFERENCES teachers(id) ON DELETE SET NULL,
-      created_at timestamptz NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (series_id, occurrence_date)
-    )
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS reservation_recurring_series_room_idx
-      ON reservation_recurring_series (room_id, weekday, start_date, repeat_until)
-  `);
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS reservation_recurring_series_teacher_idx
-      ON reservation_recurring_series (teacher_id, start_date)
-  `);
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS reservations_source_series_idx
-      ON reservations (source_series_id, source_occurrence_date)
-  `);
-}
-
 async function findTeacherByLoginId(loginId) {
   const { rows } = await pool.query(
     `SELECT id, login_id, display_name, department, role, password_hash, must_change_password
@@ -391,73 +245,8 @@ async function findRoomByCode(code) {
   return rows[0] || null;
 }
 
-async function findRecurringSeriesById(db, seriesId) {
-  const { rows } = await db.query(
-    `SELECT s.id::text,
-            s.room_id,
-            s.teacher_id,
-            s.weekday,
-            s.category,
-            s.title,
-            COALESCE(s.note, '') AS note,
-            to_char(s.start_time, 'HH24:MI') AS start_time,
-            to_char(s.end_time, 'HH24:MI') AS end_time,
-            to_char(s.start_date, 'YYYY-MM-DD') AS start_date,
-            to_char(s.repeat_until, 'YYYY-MM-DD') AS repeat_until,
-            s.created_at,
-            room.code AS room_code,
-            room.name AS room_name,
-            room.short_name,
-            room.floor,
-            room.room_type,
-            teacher.login_id AS owner_id,
-            teacher.department AS owner_dept
-       FROM reservation_recurring_series s
-       JOIN rooms room ON room.id = s.room_id
-       JOIN teachers teacher ON teacher.id = s.teacher_id
-      WHERE s.id = $1::uuid`,
-    [seriesId]
-  );
-  return rows[0] || null;
-}
-
-async function findOverrideReservationBySeriesOccurrence(db, seriesId, occurrenceDate) {
-  const { rows } = await db.query(
-    `SELECT r.id::text,
-            room.code AS room_id,
-            teacher.login_id AS owner_id,
-            teacher.department AS owner_dept,
-            r.title,
-            COALESCE(r.note, '') AS note,
-            r.category,
-            COALESCE(r.source_series_id::text, '') AS source_series_id,
-            to_char(r.source_occurrence_date, 'YYYY-MM-DD') AS source_occurrence_date,
-            r.created_at,
-            to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'YYYY-MM-DD') AS date,
-            to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS start_time,
-            to_char(r.end_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS end_time
-       FROM reservations r
-       JOIN rooms room ON room.id = r.room_id
-       JOIN teachers teacher ON teacher.id = r.teacher_id
-      WHERE r.source_series_id = $1::uuid
-        AND r.source_occurrence_date = $2::date
-      LIMIT 1`,
-    [seriesId, occurrenceDate]
-  );
-  return rows[0] || null;
-}
-
-async function upsertSeriesException(db, seriesId, occurrenceDate, teacherDbId) {
-  await db.query(
-    `INSERT INTO reservation_recurring_exceptions (series_id, occurrence_date, created_by_teacher_id)
-     VALUES ($1::uuid, $2::date, $3)
-     ON CONFLICT (series_id, occurrence_date) DO NOTHING`,
-    [seriesId, occurrenceDate, teacherDbId]
-  );
-}
-
-async function findStoredConflict(db, roomId, startAt, endAt, excludeId = null) {
-  const { rows } = await db.query(
+async function findConflict(client, roomId, startAt, endAt, excludeId = null) {
+  const { rows } = await client.query(
     `SELECT r.id::text,
             room.code AS room_id,
             room.short_name,
@@ -478,123 +267,10 @@ async function findStoredConflict(db, roomId, startAt, endAt, excludeId = null) 
   return rows[0] || null;
 }
 
-async function findRecurringConflictOnDate(db, roomId, date, start, end) {
-  const weekday = getWeekday(date);
-  const { rows } = await db.query(
-    `SELECT s.id::text AS series_id,
-            room.code AS room_id,
-            room.short_name,
-            teacher.login_id AS owner_id,
-            s.title,
-            $2::text AS date,
-            to_char(s.start_time, 'HH24:MI') AS start_time,
-            to_char(s.end_time, 'HH24:MI') AS end_time
-       FROM reservation_recurring_series s
-       JOIN rooms room ON room.id = s.room_id
-       JOIN teachers teacher ON teacher.id = s.teacher_id
-      WHERE s.room_id = $1
-        AND s.weekday = $3
-        AND s.start_date <= $2::date
-        AND (s.repeat_until IS NULL OR s.repeat_until >= $2::date)
-        AND s.start_time < $5::time
-        AND s.end_time > $4::time
-        AND NOT EXISTS (
-          SELECT 1
-            FROM reservation_recurring_exceptions e
-           WHERE e.series_id = s.id
-             AND e.occurrence_date = $2::date
-        )
-      ORDER BY s.start_date ASC, s.created_at ASC
-      LIMIT 1`,
-    [roomId, date, weekday, start, end]
-  );
-  return rows[0] || null;
-}
-
-async function findConflict(db, roomId, date, start, end, options = {}) {
-  const startAt = toKstTimestamp(date, start);
-  const endAt = toKstTimestamp(date, end);
-  const storedConflict = await findStoredConflict(db, roomId, startAt, endAt, options.excludeReservationId || null);
-  if (storedConflict) return storedConflict;
-  return findRecurringConflictOnDate(db, roomId, date, start, end);
-}
-
-async function findFutureActualConflictForSeries(db, roomId, startDate, weekday, start, end) {
-  const { rows } = await db.query(
-    `SELECT r.id::text,
-            room.code AS room_id,
-            room.short_name,
-            teacher.login_id AS owner_id,
-            r.title,
-            to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'YYYY-MM-DD') AS date,
-            to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS start_time,
-            to_char(r.end_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS end_time
-       FROM reservations r
-       JOIN rooms room ON room.id = r.room_id
-       JOIN teachers teacher ON teacher.id = r.teacher_id
-      WHERE r.room_id = $1
-        AND to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'YYYY-MM-DD') >= $2::text
-        AND EXTRACT(DOW FROM (r.start_at AT TIME ZONE '${SEOUL_TZ}')) = $3
-        AND ((r.start_at AT TIME ZONE '${SEOUL_TZ}')::time < $5::time)
-        AND ((r.end_at AT TIME ZONE '${SEOUL_TZ}')::time > $4::time)
-      ORDER BY r.start_at ASC, r.created_at ASC
-      LIMIT 1`,
-    [roomId, startDate, weekday, start, end]
-  );
-  return rows[0] || null;
-}
-
-async function findFutureSeriesConflict(db, roomId, startDate, weekday, start, end) {
-  const { rows } = await db.query(
-    `SELECT s.id::text AS series_id,
-            room.code AS room_id,
-            room.short_name,
-            teacher.login_id AS owner_id,
-            s.title,
-            to_char(GREATEST(s.start_date, $2::date), 'YYYY-MM-DD') AS date,
-            to_char(s.start_time, 'HH24:MI') AS start_time,
-            to_char(s.end_time, 'HH24:MI') AS end_time
-       FROM reservation_recurring_series s
-       JOIN rooms room ON room.id = s.room_id
-       JOIN teachers teacher ON teacher.id = s.teacher_id
-      WHERE s.room_id = $1
-        AND s.weekday = $3
-        AND s.start_time < $5::time
-        AND s.end_time > $4::time
-        AND (s.repeat_until IS NULL OR s.repeat_until >= $2::date)
-      ORDER BY GREATEST(s.start_date, $2::date) ASC, s.created_at ASC
-      LIMIT 1`,
-    [roomId, startDate, weekday, start, end]
-  );
-  return rows[0] || null;
-}
-
-async function findConflictForWeeklyForeverSeries(db, roomId, startDate, start, end) {
-  const weekday = getWeekday(startDate);
-  const actualConflict = await findFutureActualConflictForSeries(db, roomId, startDate, weekday, start, end);
-  const seriesConflict = await findFutureSeriesConflict(db, roomId, startDate, weekday, start, end);
-  return pickEarlierConflict(actualConflict, seriesConflict);
-}
-
-async function loadStoredReservations(db, { startDate, endDate, teacherDbId = null, floor = 'all' } = {}) {
+async function loadBoardReservations(startDate, endDate) {
   const startAt = `${startDate}T00:00:00${SEOUL_OFFSET}`;
   const endExclusive = `${addDays(endDate, 1)}T00:00:00${SEOUL_OFFSET}`;
-  const params = [startAt, endExclusive];
-  const where = [
-    `r.start_at >= $1::timestamptz`,
-    `r.start_at < $2::timestamptz`,
-  ];
-
-  if (teacherDbId !== null) {
-    params.push(teacherDbId);
-    where.push(`r.teacher_id = $${params.length}`);
-  }
-  if (floor !== 'all') {
-    params.push(floor);
-    where.push(`room.floor = $${params.length}`);
-  }
-
-  const { rows } = await db.query(
+  const { rows } = await pool.query(
     `SELECT r.id::text,
             room.code AS room_id,
             teacher.login_id AS owner_id,
@@ -603,10 +279,6 @@ async function loadStoredReservations(db, { startDate, endDate, teacherDbId = nu
             COALESCE(r.note, '') AS note,
             r.category,
             COALESCE(r.repeat_group_id::text, '') AS repeat_group_id,
-            COALESCE(r.source_series_id::text, '') AS source_series_id,
-            to_char(r.source_occurrence_date, 'YYYY-MM-DD') AS source_occurrence_date,
-            CASE WHEN r.source_series_id IS NOT NULL THEN '${REPEAT_MODE_WEEKLY_FOREVER}' ELSE NULL END AS repeat_mode,
-            CASE WHEN r.repeat_group_id IS NOT NULL THEN COUNT(*) OVER (PARTITION BY r.repeat_group_id) ELSE NULL END AS repeat_total_count,
             r.created_at,
             to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'YYYY-MM-DD') AS date,
             to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS start_time,
@@ -614,153 +286,91 @@ async function loadStoredReservations(db, { startDate, endDate, teacherDbId = nu
        FROM reservations r
        JOIN rooms room ON room.id = r.room_id
        JOIN teachers teacher ON teacher.id = r.teacher_id
-      WHERE ${where.join(' AND ')}
+      WHERE r.start_at >= $1::timestamptz
+        AND r.start_at < $2::timestamptz
       ORDER BY room.sort_order, r.start_at, r.created_at`,
-    params
+    [startAt, endExclusive]
   );
-
   return rows.map(reservationPublic);
-}
-
-async function loadRecurringSeriesRows(db, { startDate, endDate, teacherDbId = null, floor = 'all' } = {}) {
-  const params = [startDate, endDate];
-  const where = [
-    `s.start_date <= $2::date`,
-    `(s.repeat_until IS NULL OR s.repeat_until >= $1::date)`,
-  ];
-
-  if (teacherDbId !== null) {
-    params.push(teacherDbId);
-    where.push(`s.teacher_id = $${params.length}`);
-  }
-  if (floor !== 'all') {
-    params.push(floor);
-    where.push(`room.floor = $${params.length}`);
-  }
-
-  const { rows } = await db.query(
-    `SELECT s.id::text,
-            room.code AS room_id,
-            teacher.login_id AS owner_id,
-            teacher.department AS owner_dept,
-            s.title,
-            COALESCE(s.note, '') AS note,
-            s.category,
-            s.weekday,
-            to_char(s.start_time, 'HH24:MI') AS start_time,
-            to_char(s.end_time, 'HH24:MI') AS end_time,
-            to_char(s.start_date, 'YYYY-MM-DD') AS start_date,
-            to_char(s.repeat_until, 'YYYY-MM-DD') AS repeat_until,
-            s.created_at
-       FROM reservation_recurring_series s
-       JOIN rooms room ON room.id = s.room_id
-       JOIN teachers teacher ON teacher.id = s.teacher_id
-      WHERE ${where.join(' AND ')}
-      ORDER BY room.sort_order, s.start_time, s.created_at`,
-    params
-  );
-
-  return rows;
-}
-
-async function loadRecurringExceptionsMap(db, seriesIds, startDate, endDate) {
-  const normalizedIds = Array.from(new Set((seriesIds || []).filter(Boolean)));
-  const map = new Map();
-  if (!normalizedIds.length) return map;
-
-  const { rows } = await db.query(
-    `SELECT series_id::text, to_char(occurrence_date, 'YYYY-MM-DD') AS occurrence_date
-       FROM reservation_recurring_exceptions
-      WHERE series_id = ANY($1::uuid[])
-        AND occurrence_date >= $2::date
-        AND occurrence_date <= $3::date`,
-    [normalizedIds, startDate, endDate]
-  );
-
-  for (const row of rows) {
-    const set = map.get(row.series_id) || new Set();
-    set.add(row.occurrence_date);
-    map.set(row.series_id, set);
-  }
-  return map;
-}
-
-function expandRecurringSeriesRows(seriesRows, startDate, endDate, exceptionMap) {
-  const items = [];
-  for (const row of seriesRows) {
-    const effectiveStart = startDate > row.start_date ? startDate : row.start_date;
-    const effectiveEnd = row.repeat_until && row.repeat_until < endDate ? row.repeat_until : endDate;
-    if (effectiveEnd < effectiveStart) continue;
-
-    let occurrenceDate = alignDateToWeekdayOnOrAfter(effectiveStart, Number(row.weekday));
-    if (occurrenceDate < row.start_date) {
-      occurrenceDate = alignDateToWeekdayOnOrAfter(row.start_date, Number(row.weekday));
-    }
-
-    const skippedDates = exceptionMap.get(row.id) || new Set();
-    while (occurrenceDate <= effectiveEnd) {
-      if (!skippedDates.has(occurrenceDate)) {
-        items.push(buildSeriesOccurrencePublic(row, occurrenceDate));
-      }
-      occurrenceDate = addDays(occurrenceDate, 7);
-    }
-  }
-  return items;
-}
-
-async function loadCombinedReservations(db, startDate, endDate, options = {}) {
-  const [storedReservations, seriesRows] = await Promise.all([
-    loadStoredReservations(db, { startDate, endDate, teacherDbId: options.teacherDbId ?? null, floor: options.floor || 'all' }),
-    loadRecurringSeriesRows(db, { startDate, endDate, teacherDbId: options.teacherDbId ?? null, floor: options.floor || 'all' }),
-  ]);
-  const exceptionMap = await loadRecurringExceptionsMap(db, seriesRows.map((row) => row.id), startDate, endDate);
-  const recurringReservations = expandRecurringSeriesRows(seriesRows, startDate, endDate, exceptionMap);
-  return [...storedReservations, ...recurringReservations].sort(compareReservations);
-}
-
-async function loadBoardReservations(startDate, endDate) {
-  return loadCombinedReservations(pool, startDate, endDate);
 }
 
 async function loadSummary(user, floor = 'all') {
   const now = getSeoulNowParts();
-  const today = now.date;
-  const todayReservations = await loadCombinedReservations(pool, today, today, { floor });
-  const upcomingMine = (await loadCombinedReservations(pool, today, addDays(today, UPCOMING_LOOKAHEAD_DAYS), { teacherDbId: user.dbId }))
-    .filter((reservation) => isReservationUpcoming(reservation, now))
-    .slice(0, 8);
+  const nowTs = `${now.date}T${now.time}:00${SEOUL_OFFSET}`;
 
-  const { rows: allRoomsRows } = await pool.query(
-    `SELECT code, name, short_name, floor, room_type
-       FROM rooms
-      WHERE active = TRUE
-        AND ($1::text = 'all' OR floor = $1)
-      ORDER BY sort_order`,
-    [floor]
-  );
+  const [availableRoomsRes, allRoomsRes, todayReservationsRes, upcomingMineRes] = await Promise.all([
+    pool.query(
+      `SELECT code, name, short_name, floor, room_type
+         FROM rooms room
+        WHERE room.active = TRUE
+          AND ($1::text = 'all' OR room.floor = $1)
+          AND NOT EXISTS (
+            SELECT 1
+              FROM reservations r
+             WHERE r.room_id = room.id
+               AND r.start_at <= $2::timestamptz
+               AND r.end_at > $2::timestamptz
+          )
+        ORDER BY room.sort_order`,
+      [floor, nowTs]
+    ),
+    pool.query(
+      `SELECT code, name, short_name, floor, room_type
+         FROM rooms
+        WHERE active = TRUE AND ($1::text = 'all' OR floor = $1)
+        ORDER BY sort_order`,
+      [floor]
+    ),
+    pool.query(
+      `SELECT room.code AS room_id,
+              room.short_name,
+              to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS start_time,
+              to_char(r.end_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS end_time
+         FROM reservations r
+         JOIN rooms room ON room.id = r.room_id
+        WHERE ($1::text = 'all' OR room.floor = $1)
+          AND r.start_at >= $2::timestamptz
+          AND r.start_at < $3::timestamptz
+        ORDER BY room.sort_order, r.start_at`,
+      [floor, `${now.date}T00:00:00${SEOUL_OFFSET}`, `${addDays(now.date, 1)}T00:00:00${SEOUL_OFFSET}`]
+    ),
+    pool.query(
+      `SELECT r.id::text,
+              room.code AS room_id,
+              teacher.login_id AS owner_id,
+              teacher.department AS owner_dept,
+              r.title,
+              COALESCE(r.note, '') AS note,
+              r.category,
+              COALESCE(r.repeat_group_id::text, '') AS repeat_group_id,
+              r.created_at,
+              to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'YYYY-MM-DD') AS date,
+              to_char(r.start_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS start_time,
+              to_char(r.end_at AT TIME ZONE '${SEOUL_TZ}', 'HH24:MI') AS end_time
+         FROM reservations r
+         JOIN rooms room ON room.id = r.room_id
+         JOIN teachers teacher ON teacher.id = r.teacher_id
+        WHERE r.teacher_id = $1
+          AND r.end_at >= NOW()
+        ORDER BY r.start_at ASC
+        LIMIT 8`,
+      [user.dbId]
+    ),
+  ]);
 
-  const occupiedNow = new Set(
-    todayReservations
-      .filter((reservation) => parseTimeToMinutes(reservation.start) <= now.actualMinutes && parseTimeToMinutes(reservation.end) > now.actualMinutes)
-      .map((reservation) => reservation.roomId)
-  );
-
-  const availableNow = allRoomsRows.map(roomPublic).filter((room) => !occupiedNow.has(room.id));
-
+  const availableNow = availableRoomsRes.rows.map(roomPublic);
   const roomMap = new Map();
-  for (const reservation of todayReservations) {
-    const list = roomMap.get(reservation.roomId) || [];
-    list.push({ start: reservation.start, end: reservation.end });
-    roomMap.set(reservation.roomId, list);
+  for (const row of todayReservationsRes.rows) {
+    const list = roomMap.get(row.room_id) || [];
+    list.push({ start: row.start_time, end: row.end_time });
+    roomMap.set(row.room_id, list);
   }
 
   const remainingFree = [];
   const cursorStart = Math.max(SLOT_START, Math.ceil(now.actualMinutes / SLOT_MINUTES) * SLOT_MINUTES);
   if (cursorStart < SLOT_END) {
-    for (const room of allRoomsRows) {
-      const reservations = (roomMap.get(room.code) || [])
-        .slice()
-        .sort((a, b) => parseTimeToMinutes(a.start) - parseTimeToMinutes(b.start));
+    for (const room of allRoomsRes.rows) {
+      const reservations = (roomMap.get(room.code) || []).slice().sort((a, b) => parseTimeToMinutes(a.start) - parseTimeToMinutes(b.start));
       let cursor = cursorStart;
       for (const item of reservations) {
         const start = parseTimeToMinutes(item.start);
@@ -781,9 +391,15 @@ async function loadSummary(user, floor = 'all') {
   return {
     availableNow,
     remainingFree: remainingFree.slice(0, 12),
-    myUpcoming: upcomingMine,
+    myUpcoming: upcomingMineRes.rows.map(reservationPublic),
     now,
   };
+}
+
+function minutesToTime(minutes) {
+  const h = String(Math.floor(minutes / 60)).padStart(2, '0');
+  const m = String(minutes % 60).padStart(2, '0');
+  return `${h}:${m}`;
 }
 
 async function authMiddleware(req, res, next) {
@@ -997,9 +613,7 @@ app.post('/api/reservations', requireAuth, async (req, res, next) => {
     const note = String(req.body.note || '').trim();
     const category = String(req.body.category || 'usage');
     const ownerLoginId = req.user.role === 'admin' ? String(req.body.ownerId || req.user.login_id) : req.user.login_id;
-    const requestedRepeatMode = String(req.body.repeatMode || '').trim();
-    const repeatMode = requestedRepeatMode === REPEAT_MODE_WEEKLY_FOREVER ? REPEAT_MODE_WEEKLY_FOREVER : null;
-    const repeatCount = repeatMode === REPEAT_MODE_WEEKLY_FOREVER ? null : Number(req.body.repeatCount || 1);
+    const repeatCount = Number(req.body.repeatCount || 1);
 
     if (!isValidDate(date)) return jsonError(res, 400, '날짜가 올바르지 않습니다.');
     if (!isValidSlotTime(start) || !isValidSlotTime(end, true)) return jsonError(res, 400, '시간은 30분 단위로 입력해 주세요.');
@@ -1007,36 +621,12 @@ app.post('/api/reservations', requireAuth, async (req, res, next) => {
     if (!title) return jsonError(res, 400, '용도 / 제목을 입력해 주세요.');
     if (!['usage', 'event', 'blocked'].includes(category)) return jsonError(res, 400, '예약 구분이 올바르지 않습니다.');
     if (category === 'blocked' && req.user.role !== 'admin') return jsonError(res, 403, '관리자만 차단 일정을 만들 수 있습니다.');
-    if (!repeatMode && (!Number.isInteger(repeatCount) || repeatCount < 1 || repeatCount > 12)) {
-      return jsonError(res, 400, '반복 횟수는 1~12회만 가능합니다.');
-    }
+    if (!Number.isInteger(repeatCount) || repeatCount < 1 || repeatCount > 12) return jsonError(res, 400, '반복 횟수는 1~12회만 가능합니다.');
 
     const [room, owner] = await Promise.all([findRoomByCode(roomCode), findTeacherByLoginId(ownerLoginId)]);
     if (!room) return jsonError(res, 404, '강의실을 찾을 수 없습니다.');
     if (!owner) return jsonError(res, 404, '예약자를 찾을 수 없습니다.');
     if (req.user.role !== 'admin' && owner.login_id !== req.user.login_id) return jsonError(res, 403, '본인 일정만 예약할 수 있습니다.');
-
-    if (repeatMode === REPEAT_MODE_WEEKLY_FOREVER) {
-      await client.query('BEGIN');
-      const conflict = await findConflictForWeeklyForeverSeries(client, room.id, date, start, end);
-      if (conflict) {
-        await client.query('ROLLBACK');
-        return jsonError(res, 409, '중복 예약이 있어 저장할 수 없습니다.', { conflict: buildConflictResponse(conflict) });
-      }
-
-      const seriesId = crypto.randomUUID();
-      await client.query(
-        `INSERT INTO reservation_recurring_series (
-            id, room_id, teacher_id, weekday, category, title, note,
-            start_time, end_time, start_date, repeat_until,
-            created_by_teacher_id, updated_by_teacher_id
-         )
-         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::time, $9::time, $10::date, NULL, $11, $11)`,
-        [seriesId, room.id, owner.id, getWeekday(date), category, title, note, start, end, date, req.user.dbId]
-      );
-      await client.query('COMMIT');
-      return res.json({ ok: true, insertedCount: 0, seriesId, repeatMode });
-    }
 
     const repeatGroupId = repeatCount > 1 ? crypto.randomUUID() : null;
     const payloads = Array.from({ length: repeatCount }, (_, index) => {
@@ -1050,10 +640,19 @@ app.post('/api/reservations', requireAuth, async (req, res, next) => {
 
     await client.query('BEGIN');
     for (const item of payloads) {
-      const conflict = await findConflict(client, room.id, item.date, start, end, { excludeReservationId: null });
+      const conflict = await findConflict(client, room.id, item.startAt, item.endAt, null);
       if (conflict) {
         await client.query('ROLLBACK');
-        return jsonError(res, 409, '중복 예약이 있어 저장할 수 없습니다.', { conflict: buildConflictResponse(conflict) });
+        return jsonError(res, 409, '중복 예약이 있어 저장할 수 없습니다.', {
+          conflict: {
+            date: conflict.date,
+            start: conflict.start_time,
+            end: conflict.end_time,
+            room: conflict.short_name,
+            title: conflict.title,
+            ownerId: conflict.owner_id,
+          },
+        });
       }
     }
 
@@ -1088,89 +687,12 @@ app.put('/api/reservations/:id', requireAuth, async (req, res, next) => {
   const client = await pool.connect();
   try {
     const reservationId = String(req.params.id || '');
-    const virtualOccurrence = parseSeriesOccurrenceId(reservationId);
-
-    const date = String(req.body.date || '');
-    const roomCode = String(req.body.roomId || '');
-    const start = String(req.body.start || '');
-    const end = String(req.body.end || '');
-    const title = String(req.body.title || '').trim();
-    const note = String(req.body.note || '').trim();
-    const category = String(req.body.category || 'usage');
-
-    if (!isValidDate(date)) return jsonError(res, 400, '날짜가 올바르지 않습니다.');
-    if (!isValidSlotTime(start) || !isValidSlotTime(end, true)) return jsonError(res, 400, '시간은 30분 단위로 입력해 주세요.');
-    if (parseTimeToMinutes(end) <= parseTimeToMinutes(start)) return jsonError(res, 400, '종료 시간은 시작 시간보다 뒤여야 합니다.');
-    if (!title) return jsonError(res, 400, '용도 / 제목을 입력해 주세요.');
-    if (!['usage', 'event', 'blocked'].includes(category)) return jsonError(res, 400, '예약 구분이 올바르지 않습니다.');
-    if (category === 'blocked' && req.user.role !== 'admin') return jsonError(res, 403, '관리자만 차단 일정으로 바꿀 수 있습니다.');
-
-    if (virtualOccurrence) {
-      const series = await findRecurringSeriesById(client, virtualOccurrence.seriesId);
-      if (!series) return jsonError(res, 404, '예약을 찾을 수 없습니다.');
-      const canEdit = req.user.role === 'admin' || series.owner_id === req.user.login_id;
-      if (!canEdit) return jsonError(res, 403, '이 예약을 수정할 권한이 없습니다.');
-
-      const ownerLoginId = req.user.role === 'admin' ? String(req.body.ownerId || series.owner_id) : series.owner_id;
-      const [room, owner, existingOverride] = await Promise.all([
-        findRoomByCode(roomCode),
-        findTeacherByLoginId(ownerLoginId),
-        findOverrideReservationBySeriesOccurrence(client, virtualOccurrence.seriesId, virtualOccurrence.occurrenceDate),
-      ]);
-      if (!room) return jsonError(res, 404, '강의실을 찾을 수 없습니다.');
-      if (!owner) return jsonError(res, 404, '예약자를 찾을 수 없습니다.');
-      if (req.user.role !== 'admin' && owner.login_id !== req.user.login_id) return jsonError(res, 403, '본인 일정만 수정할 수 있습니다.');
-
-      await client.query('BEGIN');
-      await upsertSeriesException(client, virtualOccurrence.seriesId, virtualOccurrence.occurrenceDate, req.user.dbId);
-      const conflict = await findConflict(client, room.id, date, start, end, {
-        excludeReservationId: existingOverride ? existingOverride.id : null,
-      });
-      if (conflict) {
-        await client.query('ROLLBACK');
-        return jsonError(res, 409, '중복 예약이 있어 저장할 수 없습니다.', { conflict: buildConflictResponse(conflict) });
-      }
-
-      const startAt = toKstTimestamp(date, start);
-      const endAt = toKstTimestamp(date, end);
-      if (existingOverride) {
-        await client.query(
-          `UPDATE reservations
-              SET room_id = $1,
-                  teacher_id = $2,
-                  category = $3,
-                  title = $4,
-                  note = $5,
-                  start_at = $6::timestamptz,
-                  end_at = $7::timestamptz,
-                  updated_by_teacher_id = $8,
-                  updated_at = NOW()
-            WHERE id = $9::uuid`,
-          [room.id, owner.id, category, title, note, startAt, endAt, req.user.dbId, existingOverride.id]
-        );
-      } else {
-        await client.query(
-          `INSERT INTO reservations (
-              room_id, teacher_id, category, title, note,
-              start_at, end_at, source_series_id, source_occurrence_date,
-              created_by_teacher_id, updated_by_teacher_id
-           )
-           VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz, $8::uuid, $9::date, $10, $10)`,
-          [room.id, owner.id, category, title, note, startAt, endAt, virtualOccurrence.seriesId, virtualOccurrence.occurrenceDate, req.user.dbId]
-        );
-      }
-      await client.query('COMMIT');
-      return res.json({ ok: true, mode: 'series_override' });
-    }
-
     const { rows: existingRows } = await client.query(
       `SELECT r.id::text,
               r.room_id,
               r.teacher_id,
               r.category,
-              COALESCE(r.repeat_group_id::text, '') AS repeat_group_id,
-              COALESCE(r.source_series_id::text, '') AS source_series_id,
-              to_char(r.source_occurrence_date, 'YYYY-MM-DD') AS source_occurrence_date,
+              r.repeat_group_id::text,
               t.login_id AS owner_id
          FROM reservations r
          JOIN teachers t ON t.id = r.teacher_id
@@ -1182,7 +704,22 @@ app.put('/api/reservations/:id', requireAuth, async (req, res, next) => {
     const canEdit = req.user.role === 'admin' || existing.owner_id === req.user.login_id;
     if (!canEdit) return jsonError(res, 403, '이 예약을 수정할 권한이 없습니다.');
 
+    const date = String(req.body.date || '');
+    const roomCode = String(req.body.roomId || '');
+    const start = String(req.body.start || '');
+    const end = String(req.body.end || '');
+    const title = String(req.body.title || '').trim();
+    const note = String(req.body.note || '').trim();
+    const category = String(req.body.category || 'usage');
     const ownerLoginId = req.user.role === 'admin' ? String(req.body.ownerId || existing.owner_id) : existing.owner_id;
+
+    if (!isValidDate(date)) return jsonError(res, 400, '날짜가 올바르지 않습니다.');
+    if (!isValidSlotTime(start) || !isValidSlotTime(end, true)) return jsonError(res, 400, '시간은 30분 단위로 입력해 주세요.');
+    if (parseTimeToMinutes(end) <= parseTimeToMinutes(start)) return jsonError(res, 400, '종료 시간은 시작 시간보다 뒤여야 합니다.');
+    if (!title) return jsonError(res, 400, '용도 / 제목을 입력해 주세요.');
+    if (!['usage', 'event', 'blocked'].includes(category)) return jsonError(res, 400, '예약 구분이 올바르지 않습니다.');
+    if (category === 'blocked' && req.user.role !== 'admin') return jsonError(res, 403, '관리자만 차단 일정으로 바꿀 수 있습니다.');
+
     const [room, owner] = await Promise.all([findRoomByCode(roomCode), findTeacherByLoginId(ownerLoginId)]);
     if (!room) return jsonError(res, 404, '강의실을 찾을 수 없습니다.');
     if (!owner) return jsonError(res, 404, '예약자를 찾을 수 없습니다.');
@@ -1192,14 +729,19 @@ app.put('/api/reservations/:id', requireAuth, async (req, res, next) => {
     const endAt = toKstTimestamp(date, end);
 
     await client.query('BEGIN');
-    if (existing.source_series_id && existing.source_occurrence_date) {
-      await upsertSeriesException(client, existing.source_series_id, existing.source_occurrence_date, req.user.dbId);
-    }
-
-    const conflict = await findConflict(client, room.id, date, start, end, { excludeReservationId: reservationId });
+    const conflict = await findConflict(client, room.id, startAt, endAt, reservationId);
     if (conflict) {
       await client.query('ROLLBACK');
-      return jsonError(res, 409, '중복 예약이 있어 저장할 수 없습니다.', { conflict: buildConflictResponse(conflict) });
+      return jsonError(res, 409, '중복 예약이 있어 저장할 수 없습니다.', {
+        conflict: {
+          date: conflict.date,
+          start: conflict.start_time,
+          end: conflict.end_time,
+          room: conflict.short_name,
+          title: conflict.title,
+          ownerId: conflict.owner_id,
+        },
+      });
     }
 
     await client.query(
@@ -1234,56 +776,8 @@ app.delete('/api/reservations/:id', requireAuth, async (req, res, next) => {
   try {
     const reservationId = String(req.params.id || '');
     const scope = req.query.scope === 'series' ? 'series' : 'single';
-    const mode = String(req.query.mode || '');
-    const stopFromRaw = String(req.query.stopFrom || '');
-    const virtualOccurrence = parseSeriesOccurrenceId(reservationId);
-
-    if (virtualOccurrence) {
-      const series = await findRecurringSeriesById(client, virtualOccurrence.seriesId);
-      if (!series) return jsonError(res, 404, '예약을 찾을 수 없습니다.');
-      const canDelete = req.user.role === 'admin' || series.owner_id === req.user.login_id;
-      if (!canDelete) return jsonError(res, 403, '이 예약을 취소할 권한이 없습니다.');
-
-      if (scope === 'series') {
-        const stopFrom = virtualOccurrence.occurrenceDate;
-        const repeatUntil = addDays(stopFrom, -7);
-        await client.query('BEGIN');
-        await client.query(
-          `UPDATE reservation_recurring_series
-              SET repeat_until = $2::date,
-                  updated_by_teacher_id = $3,
-                  updated_at = NOW()
-            WHERE id = $1::uuid`,
-          [virtualOccurrence.seriesId, repeatUntil, req.user.dbId]
-        );
-        await client.query(
-          `DELETE FROM reservations
-            WHERE source_series_id = $1::uuid
-              AND source_occurrence_date >= $2::date`,
-          [virtualOccurrence.seriesId, stopFrom]
-        );
-        await client.query(
-          `DELETE FROM reservation_recurring_exceptions
-            WHERE series_id = $1::uuid
-              AND occurrence_date >= $2::date`,
-          [virtualOccurrence.seriesId, stopFrom]
-        );
-        await client.query('COMMIT');
-        return res.json({ ok: true, scope: 'series', mode: 'stop', stopFrom, seriesId: virtualOccurrence.seriesId });
-      }
-
-      await client.query('BEGIN');
-      await upsertSeriesException(client, virtualOccurrence.seriesId, virtualOccurrence.occurrenceDate, req.user.dbId);
-      await client.query('COMMIT');
-      return res.json({ ok: true, deletedCount: 1, scope: 'single', mode: 'skip', seriesId: virtualOccurrence.seriesId });
-    }
-
     const { rows } = await client.query(
-      `SELECT r.id::text,
-              COALESCE(r.repeat_group_id::text, '') AS repeat_group_id,
-              COALESCE(r.source_series_id::text, '') AS source_series_id,
-              to_char(r.source_occurrence_date, 'YYYY-MM-DD') AS source_occurrence_date,
-              t.login_id AS owner_id
+      `SELECT r.id::text, r.repeat_group_id::text, t.login_id AS owner_id
          FROM reservations r
          JOIN teachers t ON t.id = r.teacher_id
         WHERE r.id = $1::uuid`,
@@ -1294,51 +788,14 @@ app.delete('/api/reservations/:id', requireAuth, async (req, res, next) => {
     const canDelete = req.user.role === 'admin' || reservation.owner_id === req.user.login_id;
     if (!canDelete) return jsonError(res, 403, '이 예약을 취소할 권한이 없습니다.');
 
-    if (scope === 'series' && reservation.source_series_id) {
-      const stopFrom = reservation.source_occurrence_date || stopFromRaw;
-      if (!isValidDate(stopFrom)) return jsonError(res, 400, '반복 종료 날짜가 올바르지 않습니다.');
-      await client.query('BEGIN');
-      await client.query(
-        `UPDATE reservation_recurring_series
-            SET repeat_until = $2::date,
-                updated_by_teacher_id = $3,
-                updated_at = NOW()
-          WHERE id = $1::uuid`,
-        [reservation.source_series_id, addDays(stopFrom, -7), req.user.dbId]
-      );
-      await client.query(
-        `DELETE FROM reservations
-          WHERE source_series_id = $1::uuid
-            AND source_occurrence_date >= $2::date`,
-        [reservation.source_series_id, stopFrom]
-      );
-      await client.query(
-        `DELETE FROM reservation_recurring_exceptions
-          WHERE series_id = $1::uuid
-            AND occurrence_date >= $2::date`,
-        [reservation.source_series_id, stopFrom]
-      );
-      await client.query('COMMIT');
-      return res.json({ ok: true, scope: 'series', mode: 'stop', stopFrom, seriesId: reservation.source_series_id });
-    }
-
     if (scope === 'series' && reservation.repeat_group_id) {
       const result = await client.query('DELETE FROM reservations WHERE repeat_group_id = $1::uuid', [reservation.repeat_group_id]);
       return res.json({ ok: true, deletedCount: result.rowCount, scope: 'series' });
     }
 
-    if (reservation.source_series_id && reservation.source_occurrence_date) {
-      await client.query('BEGIN');
-      await upsertSeriesException(client, reservation.source_series_id, reservation.source_occurrence_date, req.user.dbId);
-      const result = await client.query('DELETE FROM reservations WHERE id = $1::uuid', [reservationId]);
-      await client.query('COMMIT');
-      return res.json({ ok: true, deletedCount: result.rowCount, scope: 'single', mode: 'skip', seriesId: reservation.source_series_id });
-    }
-
     const result = await client.query('DELETE FROM reservations WHERE id = $1::uuid', [reservationId]);
     res.json({ ok: true, deletedCount: result.rowCount, scope: 'single' });
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => {});
     next(error);
   } finally {
     client.release();
@@ -1366,7 +823,6 @@ setInterval(() => {
 
 async function start() {
   await pool.query('SELECT 1');
-  await ensureRecurringSchema();
   app.listen(PORT, () => {
     console.log(`대세학원 강의실 예약 서버가 포트 ${PORT}에서 실행 중입니다.`);
   });
