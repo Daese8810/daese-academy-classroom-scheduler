@@ -1199,8 +1199,11 @@ case 'set-slot-minutes':
               <div class="field full" id="repeatCountField" style="${(isEdit || !recurring) ? 'display:none;' : ''}">
                 <label for="repeatCount">반복 횟수</label>
                 <select id="repeatCount">
-                  ${Array.from({ length: 12 }, (_, i) => i + 1).map(n => `<option value="${n}" ${n === repeatCountDefault ? 'selected' : ''}>총 ${n}회</option>`).join('')}
-                </select>
+  ${[
+    ...Array.from({ length: 12 }, (_, i) => i + 1),
+    52
+  ].map(n => `<option value="${n}" ${n === repeatCountDefault ? 'selected' : ''}>총 ${n}회</option>`).join('')}
+</select>
               </div>
               <div class="modal-actions full">
                 <button type="button" data-modal-close>취소</button>
