@@ -553,8 +553,11 @@ const boardTitle = state.ui.viewMode === 'week'
           <header class="app-header">
             <div class="app-header-inner">
               <div class="brand">
-                <h1>${escapeHtml(state.appName)}</h1>
-                <p>${escapeHtml(state.orgName)}</p>
+                <img class="brand-mark" src="/classroomlogo.png" alt="" aria-hidden="true" />
+                <div class="brand-copy">
+                  <h1>${escapeHtml(state.appName)}</h1>
+                  <p>${escapeHtml(state.orgName)}</p>
+                </div>
               </div>
               <div class="user-toolbar">
                 <span class="badge ${user.role === 'admin' ? 'admin' : ''}">${escapeHtml(user.id)} · ${escapeHtml(user.dept)}${user.role === 'admin' ? ' · 관리자' : ''}</span>
