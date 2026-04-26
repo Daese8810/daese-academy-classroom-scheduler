@@ -435,6 +435,48 @@ button.primary:hover {
       align-items: center;
     }
 
+    .toolbar-summary-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .toolbar-summary-item {
+      min-width: 0;
+      padding: 10px 12px;
+      border: 1px solid #cfe0ff;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.78);
+      display: grid;
+      grid-template-columns: auto auto 1fr;
+      align-items: baseline;
+      gap: 8px;
+      color: #0f2a55;
+    }
+
+    .toolbar-summary-item span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .toolbar-summary-item strong {
+      font-size: 20px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .toolbar-summary-item small {
+      min-width: 0;
+      color: #344054;
+      font-size: 12px;
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .toolbar-row select,
     .toolbar-row input[type="date"] {
       border-radius: 12px;
@@ -1121,6 +1163,8 @@ button.primary:hover {
     }
 
     @media (max-width: 1280px) {
+      .toolbar-summary-strip { grid-template-columns: 1fr; }
+      .toolbar-summary-item { grid-template-columns: auto auto minmax(0, 1fr); }
       .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .main-grid { grid-template-columns: 1fr; }
       .side-stack { position: static; }
@@ -1132,6 +1176,8 @@ button.primary:hover {
       .login-left, .login-right { padding: 28px; }
       .account-list { grid-template-columns: 1fr; }
       .summary-grid { grid-template-columns: 1fr; }
+      .toolbar-summary-item { grid-template-columns: 1fr auto; }
+      .toolbar-summary-item small { grid-column: 1 / -1; }
       .app-header-inner { align-items: flex-start; }
       .quick-panel-grid { grid-template-columns: 1fr; }
       .modal-grid, .detail-grid { grid-template-columns: 1fr; }

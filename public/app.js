@@ -617,6 +617,23 @@ const boardTitle = state.ui.viewMode === 'week'
                   <span class="legend-item"><span class="legend-swatch" style="background: var(--gray-bg);"></span>필터 제외 예약</span>
                 </div>
               </div>
+              <div class="toolbar-summary-strip">
+                <div class="toolbar-summary-item">
+                  <span>선택 기준</span>
+                  <strong>${escapeHtml(VIEW_MODES[state.ui.viewMode])}</strong>
+                  <small>${escapeHtml(rangeTitle)}</small>
+                </div>
+                <div class="toolbar-summary-item">
+                  <span>지금 비어 있는 강의실</span>
+                  <strong>${availableNow.length}개</strong>
+                  <small>${availableNow.slice(0, 5).map(r => r.short).join(', ') || '현재 기준으로 비어 있는 강의실이 없습니다.'}</small>
+                </div>
+                <div class="toolbar-summary-item">
+                  <span>내 예약</span>
+                  <strong>${myUpcoming.length}건</strong>
+                  <small>${myUpcoming.slice(0, 2).map(r => `${formatDateLabel(r.date)} ${r.start} ${getRoom(r.roomId)?.short || ''}`).join(' · ') || '예정된 예약이 없습니다.'}</small>
+                </div>
+              </div>
               <div class="toolbar-row">
                 <div class="group">
                   <select id="floorFilter">
@@ -681,24 +698,6 @@ const boardTitle = state.ui.viewMode === 'week'
     </div>
   </div>
 </div>
-              </div>
-            </section>
-            <div class="layout-gap"></div>
-            <section class="summary-grid">
-              <div class="card summary-card">
-                <h3>선택 기준</h3>
-                <strong>${escapeHtml(VIEW_MODES[state.ui.viewMode])}</strong>
-                <p>${escapeHtml(rangeTitle)}</p>
-              </div>
-              <div class="card summary-card">
-                <h3>지금 비어 있는 강의실</h3>
-                <strong>${availableNow.length}개</strong>
-                <p>${availableNow.slice(0, 5).map(r => r.short).join(', ') || '현재 기준으로 비어 있는 강의실이 없습니다.'}</p>
-              </div>
-              <div class="card summary-card">
-                <h3>내 예약</h3>
-                <strong>${myUpcoming.length}건</strong>
-                <p>${myUpcoming.slice(0, 2).map(r => `${formatDateLabel(r.date)} ${r.start} ${getRoom(r.roomId)?.short || ''}`).join(' · ') || '예정된 예약이 없습니다.'}</p>
               </div>
             </section>
             <div class="layout-gap"></div>
