@@ -57,6 +57,37 @@ CREATE INDEX IF NOT EXISTS idx_reservations_teacher_time ON reservations (teache
 CREATE INDEX IF NOT EXISTS idx_teacher_sessions_teacher ON teacher_sessions (teacher_id);
 CREATE INDEX IF NOT EXISTS idx_teacher_sessions_expires ON teacher_sessions (expires_at);
 
+CREATE TABLE IF NOT EXISTS team_presence (
+  person_name TEXT PRIMARY KEY,
+  is_online BOOLEAN NOT NULL DEFAULT FALSE,
+  last_seen_at TIMESTAMPTZ NULL,
+  last_login_at TIMESTAMPTZ NULL,
+  last_logout_at TIMESTAMPTZ NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS team_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  sender_name TEXT NOT NULL,
+  recipient_name TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  read_at TIMESTAMPTZ NULL
+);
+
+CREATE TABLE IF NOT EXISTS team_access_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  person_name TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  ip_address TEXT NOT NULL DEFAULT '',
+  user_agent TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_messages_recipient_time ON team_messages (recipient_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_team_messages_sender_time ON team_messages (sender_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_team_access_logs_time ON team_access_logs (created_at DESC);
+
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -88,6 +119,17 @@ VALUES
   ('국대', '국대', '국어과', 'teacher',   'scrypt$16384$8$1$iTn1SHtj785gV2hOAu2AqA==$NAkPofkV2KfPPOryYQ9Q//zb5SXD+GRDCx/oD016HrpQLywUqklGGfWasNGFMk2wkyBBAvmGs01jhtCUFZ5lNw==', TRUE),
   ('국짱', '국짱', '국어과', 'teacher',   'scrypt$16384$8$1$CgQC5z3wtSjuD1FJDHQ/TQ==$OUZIy++WHCWBZdtMlt8RohSJ54sIDfNAXGp/xcEcSpWGj2vN0xjvLv+VcEYMJEt/miRT/duF0PHxdJ7Te8Gw6Q==', TRUE)
 ON CONFLICT (login_id) DO NOTHING;
+
+INSERT INTO team_presence (person_name)
+VALUES
+  ('스텐'),
+  ('주디'),
+  ('조나단'),
+  ('존'),
+  ('다나'),
+  ('스테이시'),
+  ('관리팀')
+ON CONFLICT (person_name) DO NOTHING;
 
 INSERT INTO rooms (code, name, short_name, floor, room_type, sort_order)
 VALUES

@@ -13,6 +13,14 @@ const SLOT_END = 18 * 60;
 const SLOT_MINUTES = 30;
 const SEOUL_OFFSET = '+09:00';
 const SEOUL_TZ = 'Asia/Seoul';
+const TEAM_COMMUNICATION_PEOPLE = ['스텐', '주디', '조나단', '존', '다나', '스테이시', '관리팀'];
+const TEAM_COMMUNICATION_ONLINE_MS = 90 * 1000;
+const DASHBOARD_ALLOWED_ORIGINS = new Set([
+  'https://daese8810.github.io',
+  'https://daeseaca.cafe24.com',
+  'http://localhost',
+  'http://127.0.0.1',
+]);
 
 if (!DATABASE_URL) {
   console.error('DATABASE_URL 환경 변수가 필요합니다.');
@@ -34,6 +42,18 @@ app.use((req, res, next) => {
   if ((APP_URL || '').startsWith('https://')) {
     res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
   }
+  next();
+});
+app.use('/api/team-communication', (req, res, next) => {
+  const origin = String(req.headers.origin || '');
+  const originRoot = origin.replace(/:\d+$/, '');
+  if (DASHBOARD_ALLOWED_ORIGINS.has(origin) || DASHBOARD_ALLOWED_ORIGINS.has(originRoot)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 app.use(express.json({ limit: '256kb' }));
@@ -171,6 +191,30 @@ function reservationPublic(row) {
     end: row.end_time,
     category: row.category,
     recurringGroupId: row.repeat_group_id || null,
+    createdAt: row.created_at,
+  };
+}
+
+function isTeamCommunicationPerson(name) {
+  return TEAM_COMMUNICATION_PEOPLE.includes(String(name || '').trim());
+}
+
+function teamMessagePublic(row) {
+  return {
+    id: row.id,
+    sender: row.sender_name,
+    recipient: row.recipient_name,
+    body: row.body,
+    createdAt: row.created_at,
+    readAt: row.read_at || null,
+  };
+}
+
+function teamAccessLogPublic(row) {
+  return {
+    id: row.id,
+    person: row.person_name,
+    event: row.event_type,
     createdAt: row.created_at,
   };
 }
@@ -402,6 +446,51 @@ function minutesToTime(minutes) {
   return `${h}:${m}`;
 }
 
+async function ensureTeamCommunicationTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS team_presence (
+      person_name TEXT PRIMARY KEY,
+      is_online BOOLEAN NOT NULL DEFAULT FALSE,
+      last_seen_at TIMESTAMPTZ NULL,
+      last_login_at TIMESTAMPTZ NULL,
+      last_logout_at TIMESTAMPTZ NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS team_messages (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      sender_name TEXT NOT NULL,
+      recipient_name TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      read_at TIMESTAMPTZ NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS team_access_logs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      person_name TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      ip_address TEXT NOT NULL DEFAULT '',
+      user_agent TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_team_messages_recipient_time
+      ON team_messages (recipient_name, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_team_messages_sender_time
+      ON team_messages (sender_name, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_team_access_logs_time
+      ON team_access_logs (created_at DESC);
+  `);
+
+  for (const person of TEAM_COMMUNICATION_PEOPLE) {
+    await pool.query(
+      'INSERT INTO team_presence (person_name) VALUES ($1) ON CONFLICT (person_name) DO NOTHING',
+      [person]
+    );
+  }
+}
+
 async function authMiddleware(req, res, next) {
   try {
     const cookies = parseCookies(req.headers.cookie || '');
@@ -498,6 +587,179 @@ app.get('/api/bootstrap', async (req, res, next) => {
       users: teachersRes.rows,
       rooms: roomsRes.rows.map(roomPublic),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/team-communication/snapshot', async (req, res, next) => {
+  try {
+    const person = String(req.query.person || '').trim();
+    if (!isTeamCommunicationPerson(person)) {
+      return jsonError(res, 400, '등록된 사용자만 조회할 수 있습니다.');
+    }
+
+    const [presenceRes, receivedRes, sentRes, unreadRes, accessLogRes] = await Promise.all([
+      pool.query(
+        `SELECT person_name, is_online, last_seen_at
+           FROM team_presence
+          WHERE person_name = ANY($1::text[])`,
+        [TEAM_COMMUNICATION_PEOPLE]
+      ),
+      pool.query(
+        `SELECT id::text, sender_name, recipient_name, body, created_at, read_at
+           FROM team_messages
+          WHERE recipient_name = $1
+          ORDER BY created_at DESC
+          LIMIT 200`,
+        [person]
+      ),
+      pool.query(
+        `SELECT id::text, sender_name, recipient_name, body, created_at, read_at
+           FROM team_messages
+          WHERE sender_name = $1
+          ORDER BY created_at DESC
+          LIMIT 200`,
+        [person]
+      ),
+      pool.query(
+        `SELECT id::text, sender_name, recipient_name, body, created_at, read_at
+           FROM team_messages
+          WHERE recipient_name = $1
+            AND read_at IS NULL
+          ORDER BY created_at DESC
+          LIMIT 50`,
+        [person]
+      ),
+      person === '스텐'
+        ? pool.query(
+            `SELECT id::text, person_name, event_type, created_at
+               FROM team_access_logs
+              ORDER BY created_at DESC
+              LIMIT 300`
+          )
+        : Promise.resolve({ rows: [] }),
+    ]);
+
+    const presenceByName = new Map(presenceRes.rows.map((row) => [row.person_name, row]));
+    const now = Date.now();
+    const people = TEAM_COMMUNICATION_PEOPLE.map((name) => {
+      const row = presenceByName.get(name) || {};
+      const seenAt = row.last_seen_at ? new Date(row.last_seen_at).getTime() : 0;
+      return {
+        name,
+        online: Boolean(row.is_online) && seenAt > 0 && now - seenAt <= TEAM_COMMUNICATION_ONLINE_MS,
+        lastSeenAt: row.last_seen_at || null,
+      };
+    });
+
+    res.json({
+      ok: true,
+      people,
+      receivedMessages: receivedRes.rows.map(teamMessagePublic),
+      sentMessages: sentRes.rows.map(teamMessagePublic),
+      unreadMessages: unreadRes.rows.map(teamMessagePublic),
+      unreadCount: unreadRes.rows.length,
+      accessLogs: accessLogRes.rows.map(teamAccessLogPublic),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/team-communication/presence', async (req, res, next) => {
+  try {
+    const person = String(req.body.person || '').trim();
+    const event = String(req.body.event || 'heartbeat').trim();
+    if (!isTeamCommunicationPerson(person)) {
+      return jsonError(res, 400, '등록된 사용자만 접속 상태를 남길 수 있습니다.');
+    }
+    if (!['login', 'heartbeat', 'logout'].includes(event)) {
+      return jsonError(res, 400, '접속 이벤트가 올바르지 않습니다.');
+    }
+
+    await pool.query(
+      'INSERT INTO team_presence (person_name) VALUES ($1) ON CONFLICT (person_name) DO NOTHING',
+      [person]
+    );
+
+    if (event === 'logout') {
+      await pool.query(
+        `UPDATE team_presence
+            SET is_online = FALSE,
+                last_logout_at = NOW(),
+                updated_at = NOW()
+          WHERE person_name = $1`,
+        [person]
+      );
+    } else {
+      await pool.query(
+        `UPDATE team_presence
+            SET is_online = TRUE,
+                last_seen_at = NOW(),
+                last_login_at = CASE WHEN $2 = 'login' THEN NOW() ELSE last_login_at END,
+                updated_at = NOW()
+          WHERE person_name = $1`,
+        [person, event]
+      );
+    }
+
+    if (event === 'login' || event === 'logout') {
+      await pool.query(
+        `INSERT INTO team_access_logs (person_name, event_type, ip_address, user_agent)
+         VALUES ($1, $2, $3, $4)`,
+        [person, event, getClientIp(req), String(req.headers['user-agent'] || '').slice(0, 300)]
+      );
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/team-communication/messages', async (req, res, next) => {
+  try {
+    const sender = String(req.body.sender || '').trim();
+    const recipient = String(req.body.recipient || '').trim();
+    const body = String(req.body.body || '').trim();
+    if (!isTeamCommunicationPerson(sender) || !isTeamCommunicationPerson(recipient)) {
+      return jsonError(res, 400, '등록된 사용자끼리만 메시지를 보낼 수 있습니다.');
+    }
+    if (sender === recipient) {
+      return jsonError(res, 400, '본인에게는 메시지를 보낼 수 없습니다.');
+    }
+    if (!body) {
+      return jsonError(res, 400, '메시지 내용을 입력해 주세요.');
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO team_messages (sender_name, recipient_name, body)
+       VALUES ($1, $2, $3)
+       RETURNING id::text, sender_name, recipient_name, body, created_at, read_at`,
+      [sender, recipient, body.slice(0, 2000)]
+    );
+    res.json({ ok: true, message: teamMessagePublic(rows[0]) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/team-communication/messages/read', async (req, res, next) => {
+  try {
+    const person = String(req.body.person || '').trim();
+    if (!isTeamCommunicationPerson(person)) {
+      return jsonError(res, 400, '등록된 사용자만 메시지를 읽을 수 있습니다.');
+    }
+
+    const result = await pool.query(
+      `UPDATE team_messages
+          SET read_at = COALESCE(read_at, NOW())
+        WHERE recipient_name = $1
+          AND read_at IS NULL`,
+      [person]
+    );
+    res.json({ ok: true, updatedCount: result.rowCount });
   } catch (error) {
     next(error);
   }
@@ -825,6 +1087,7 @@ setInterval(() => {
 
 async function start() {
   await pool.query('SELECT 1');
+  await ensureTeamCommunicationTables();
   app.listen(PORT, () => {
     console.log(`대세학원 강의실 예약 서버가 포트 ${PORT}에서 실행 중입니다.`);
   });
