@@ -3,6 +3,7 @@
       const SLOT_START = 9 * 60;
 const SLOT_END = 22 * 60; // 오후 10시
       const DEFAULT_SLOT_MINUTES = 30;
+      const KAKAO_CROSS_RESERVATION_URL = 'https://invite.kakao.com/tc/ioWh6sUst8';
       const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
      const VIEW_MODES = {
   week: '주간 보기',
@@ -252,6 +253,75 @@ function getEndTimeOptions() {
 
       function getUser(userId) {
         return state.users.find(u => u.id === userId) || null;
+      }
+
+      function getRoomDepartment(room) {
+        if (!room) return '';
+        if (room.floor === '6층') return '영어과';
+        if (room.floor === '7층') return '국어과';
+        return '';
+      }
+
+      function isCrossDepartmentReservation(payload) {
+        const room = getRoom(payload.roomId);
+        const owner = getUser(payload.ownerId) || getCurrentUser();
+        const roomDept = getRoomDepartment(room);
+        return Boolean(roomDept && owner?.dept && roomDept !== owner.dept);
+      }
+
+      function buildCrossDepartmentReservationMessage(payload, repeatCount) {
+        const room = getRoom(payload.roomId);
+        const owner = getUser(payload.ownerId) || getCurrentUser();
+        const roomDept = getRoomDepartment(room);
+        return [
+          '[강의실 교차 예약 알림]',
+          `예약자: ${payload.ownerId} (${owner?.dept || '학과 미확인'})`,
+          `예약 강의실: ${room?.short || payload.roomId} (${roomDept || '학과 미확인'})`,
+          `날짜: ${formatDateLong(payload.date)}`,
+          `시간: ${payload.start}~${payload.end}`,
+          `용도: ${payload.title}`,
+          payload.note ? `메모: ${payload.note}` : null,
+          repeatCount > 1 ? `반복 예약: 총 ${repeatCount}건` : null
+        ].filter(Boolean).join('\n');
+      }
+
+      async function copyTextToClipboard(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        textarea.style.top = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand('copy');
+        textarea.remove();
+        return copied;
+      }
+
+      async function handleCrossDepartmentReservationNotice(message, kakaoWindow) {
+        if (!message) return;
+        let copied = false;
+        try {
+          copied = await copyTextToClipboard(message);
+        } catch (error) {
+          copied = false;
+        }
+        if (kakaoWindow && !kakaoWindow.closed) {
+          try {
+            kakaoWindow.opener = null;
+            kakaoWindow.location.href = KAKAO_CROSS_RESERVATION_URL;
+          } catch (error) {
+            window.open(KAKAO_CROSS_RESERVATION_URL, '_blank', 'noopener,noreferrer');
+          }
+        } else {
+          window.open(KAKAO_CROSS_RESERVATION_URL, '_blank', 'noopener,noreferrer');
+        }
+        showToast(copied ? '교차 예약 내용을 복사하고 카톡방을 열었습니다.' : '카톡방을 열었습니다. 예약 내용은 직접 복사해 주세요.', copied ? 'success' : 'error');
       }
 
       function getReservationsForRoomDate(roomId, date) {
@@ -708,14 +778,15 @@ function renderWeekBoard(user) {
         const now = getNowInfo();
         let headRow1 = '<tr><th class="first-col" rowspan="2">강의실</th>';
         let headRow2 = '<tr>';
-        for (const date of dates) {
+        dates.forEach((date, dateIndex) => {
           const slots = getVisibleSlotsForDate(date);
-          if (!slots.length) continue;
-          headRow1 += `<th class="day-group" colspan="${slots.length}" data-week-date="${escapeHtml(date)}">${escapeHtml(formatDateLabel(date))}</th>`;
-          for (const slot of slots) {
-            headRow2 += `<th>${escapeHtml(slot)}</th>`;
-          }
-        }
+          if (!slots.length) return;
+          const dayTone = dateIndex % 2 === 0 ? 'week-day-even' : 'week-day-odd';
+          headRow1 += `<th class="day-group ${dayTone} ${dateIndex > 0 ? 'week-day-break' : ''}" colspan="${slots.length}" data-week-date="${escapeHtml(date)}">${escapeHtml(formatDateLabel(date))}</th>`;
+          slots.forEach((slot, slotIndex) => {
+            headRow2 += `<th class="week-time-cell ${dayTone} ${slotIndex === 0 && dateIndex > 0 ? 'week-day-break' : ''}">${escapeHtml(slot)}</th>`;
+          });
+        });
         headRow1 += '</tr>';
         headRow2 += '</tr>';
 
@@ -731,14 +802,16 @@ function renderWeekBoard(user) {
 
       function renderWeekRoomRow(room, dates, user, now) {
         let html = `<tr><th>${escapeHtml(room.short)}<span class="room-sub">${escapeHtml(room.floor)} · ${room.type === 'seminar' ? '세미나실' : '일반 강의실'}</span></th>`;
-        for (const date of dates) {
+        dates.forEach((date, dateIndex) => {
           const slots = getVisibleSlotsForDate(date);
-          if (!slots.length) continue;
+          if (!slots.length) return;
           const reservations = getReservationsForRoomDate(room.id, date);
+          const dayTone = dateIndex % 2 === 0 ? 'week-day-even' : 'week-day-odd';
           let i = 0;
           while (i < slots.length) {
             const slot = slots[i];
             const reservation = reservations.find(r => timeToMinutes(r.start) <= timeToMinutes(slot) && timeToMinutes(slot) < timeToMinutes(r.end));
+            const cellClass = `${dayTone} ${i === 0 && dateIndex > 0 ? 'week-day-break' : ''}`;
             if (reservation) {
               let span = 0;
               while (i + span < slots.length) {
@@ -746,17 +819,17 @@ function renderWeekBoard(user) {
                 if (timeToMinutes(reservation.start) <= slotMin && slotMin < timeToMinutes(reservation.end)) span += 1;
                 else break;
               }
-              html += renderReservationCell(reservation, span, user);
+              html += renderReservationCell(reservation, span, user, cellClass);
               i += span;
             } else {
   const slotMinutes = getSlotMinutes();
   const isNow = date === now.date && timeToMinutes(slot) <= now.actualMinutes && now.actualMinutes < timeToMinutes(slot) + slotMinutes;
   const past = date < now.date || (date === now.date && timeToMinutes(slot) + slotMinutes <= now.actualMinutes);
-  html += `<td class="empty-slot ${isNow ? 'now-marker' : ''} ${past ? 'past-slot' : ''}" data-action="new-reservation-cell" data-room-id="${escapeHtml(room.id)}" data-date="${escapeHtml(date)}" data-start="${escapeHtml(slot)}"></td>`;
+  html += `<td class="empty-slot ${cellClass} ${isNow ? 'now-marker' : ''} ${past ? 'past-slot' : ''}" data-action="new-reservation-cell" data-room-id="${escapeHtml(room.id)}" data-date="${escapeHtml(date)}" data-start="${escapeHtml(slot)}"></td>`;
   i += 1;
 }
           }
-        }
+        });
         html += '</tr>';
         return html;
       }
@@ -813,7 +886,7 @@ const past = date < now.date || (date === now.date && timeToMinutes(slot) + slot
         `;
       }
 
-      function renderReservationCell(reservation, span, user) {
+      function renderReservationCell(reservation, span, user, tdClass = '') {
         const room = getRoom(reservation.roomId);
         const matchesFilter = isReservationMatchingFilters(reservation, user);
         const baseClass = matchesFilter ? getCategoryClass(reservation.category) : 'res-filtered';
@@ -823,7 +896,7 @@ const past = date < now.date || (date === now.date && timeToMinutes(slot) + slot
           ? `${escapeHtml(reservation.ownerId)} · ${escapeHtml(reservation.start)}~${escapeHtml(reservation.end)}`
           : `${escapeHtml(getCategoryLabel(reservation.category))} · ${escapeHtml(reservation.start)}~${escapeHtml(reservation.end)}`;
         return `
-          <td colspan="${span}">
+          <td colspan="${span}" class="${escapeHtml(tdClass)}">
             <div class="res-box ${baseClass} ${ownClass}" data-action="open-reservation" data-res-id="${escapeHtml(reservation.id)}" title="${escapeHtml(room?.name || '')} / ${escapeHtml(reservation.title)} / ${escapeHtml(reservation.ownerId)}">
               <div>
                 <span class="tiny-tag">${escapeHtml(matchesFilter ? getCategoryLabel(reservation.category) : '필터 제외')}</span>
@@ -1282,6 +1355,10 @@ case 'set-slot-minutes':
               ownerId,
               repeatCount
             };
+            const crossReservationMessage = isCrossDepartmentReservation(payload)
+              ? buildCrossDepartmentReservationMessage(payload, repeatCount)
+              : '';
+            const pendingKakaoWindow = crossReservationMessage ? window.open('about:blank', '_blank') : null;
 
             try {
               if (isEdit) {
@@ -1300,7 +1377,11 @@ case 'set-slot-minutes':
               await refreshAllData();
               closeModal();
               render();
+              await handleCrossDepartmentReservationNotice(crossReservationMessage, pendingKakaoWindow);
             } catch (error) {
+              if (pendingKakaoWindow && !pendingKakaoWindow.closed) {
+                pendingKakaoWindow.close();
+              }
               const conflict = error.data?.conflict;
               if (conflict) {
                 showToast(`중복 예약이 있어 저장할 수 없습니다. ${conflict.date} ${conflict.start}~${conflict.end} / ${conflict.room} / ${conflict.title}`, 'error');
