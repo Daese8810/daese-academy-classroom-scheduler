@@ -57,7 +57,6 @@ const ROOM_CAPACITY = [
     teacher: 'all',
     dept: 'all',
     availableNowOnly: false,
-    remainingTodayOnly: false,
     myOnly: false,
     forceMobile: false,
     slotMinutes: 30 // 30분 / 60분 전환용
@@ -68,7 +67,9 @@ const ROOM_CAPACITY = [
         try {
           const raw = localStorage.getItem(UI_KEY);
           if (!raw) return defaultUiState();
-          return Object.assign(defaultUiState(), JSON.parse(raw) || {});
+          const saved = JSON.parse(raw) || {};
+          delete saved.remainingTodayOnly;
+          return Object.assign(defaultUiState(), saved);
         } catch (error) {
           console.error(error);
           return defaultUiState();
@@ -317,16 +318,7 @@ function getEndTimeOptions() {
       }
 
       function getVisibleSlotsForDate(dateStr) {
-        const slots = getTimeSlots();
-        if (!state.ui.remainingTodayOnly) return slots;
-        const now = getNowInfo();
-        const currentWeek = getWeekDates(state.ui.selectedDate);
-        if (!currentWeek.includes(now.date)) return slots;
-        if (dateStr < now.date) return [];
-        if (dateStr > now.date) return slots;
-        const slotMinutes = getSlotMinutes();
-const nextSlot = Math.ceil(now.actualMinutes / slotMinutes) * slotMinutes;
-return slots.filter(time => timeToMinutes(time) >= nextSlot);
+        return getTimeSlots();
       }
 
       function getWeekTitle(dateStr) {
@@ -361,7 +353,6 @@ function getWeekendTitle(dateStr) {
         if (state.ui.dept !== 'all') hints.push(`학과 필터: ${state.ui.dept}`);
         if (state.ui.myOnly && user) hints.push(`내 예약만 강조: ${user.id}`);
         if (state.ui.availableNowOnly) hints.push('현재 시각 기준 사용 가능한 강의실만 표시');
-        if (state.ui.remainingTodayOnly) hints.push('현재 주에서 오늘 남은 시간대만 표시');
         if (!hints.length) return '빈 칸을 누르면 바로 예약할 수 있고, 색이 있는 칸을 누르면 상세 보기·수정·취소가 가능합니다.';
         return hints.join(' · ');
       }
@@ -462,7 +453,6 @@ function getWeekendTitle(dateStr) {
 const selectedDate = state.ui.selectedDate;
 const availableNow = getAvailableRoomsNow(isToday(selectedDate) ? selectedDate : now.date);
 const myUpcoming = getUpcomingMine(user);
-const remainingFree = getRemainingFreeBlocksToday();
 const mobileMode = state.ui.forceMobile || window.innerWidth < 900;
 
 const rangeTitle = state.ui.viewMode === 'week'
@@ -500,7 +490,7 @@ const boardTitle = state.ui.viewMode === 'week'
                 <span class="badge ${user.role === 'admin' ? 'admin' : ''}">${escapeHtml(user.id)} · ${escapeHtml(user.dept)}${user.role === 'admin' ? ' · 관리자' : ''}</span>
                 <span class="badge">현재 시각 ${escapeHtml(now.date)} ${escapeHtml(minutesToTime(Math.floor(now.actualMinutes / 60) * 60 + (now.actualMinutes % 60 >= 30 ? 30 : 0)))}</span>
                 <details class="quick-panel-dropdown">
-                  <summary class="ghost quick-panel-summary">내 예약 바로보기</summary>
+                  <summary class="quick-panel-summary">내 예약 바로보기 <span class="summary-chevron">▾</span></summary>
                   <div class="quick-panel-dropdown-panel quick-panel-dropdown-panel-narrow">
                     <section class="quick-panel-section">
                       <h3>내 예약 바로보기</h3>
@@ -512,7 +502,7 @@ const boardTitle = state.ui.viewMode === 'week'
                   </div>
                 </details>
                 <details class="quick-panel-dropdown">
-                  <summary class="ghost quick-panel-summary">지금 비어있는 강의실</summary>
+                  <summary class="quick-panel-summary">지금 비어있는 강의실 <span class="summary-chevron">▾</span></summary>
                   <div class="quick-panel-dropdown-panel quick-panel-dropdown-panel-narrow">
                     <section class="quick-panel-section">
                       <h3>지금 비어있는 강의실</h3>
@@ -603,7 +593,6 @@ const boardTitle = state.ui.viewMode === 'week'
   </div>
   <div class="group">
     <label class="toggle-pill"><input type="checkbox" id="availableNowOnly" ${state.ui.availableNowOnly ? 'checked' : ''} /> 지금 비어 있는 강의실만 보기</label>
-    <label class="toggle-pill"><input type="checkbox" id="remainingTodayOnly" ${state.ui.remainingTodayOnly ? 'checked' : ''} /> 오늘 남은 빈 시간만 보기</label>
     <label class="toggle-pill"><input type="checkbox" id="myOnly" ${state.ui.myOnly ? 'checked' : ''} /> 내가 예약한 것만 보기</label>
     <label class="toggle-pill"><input type="checkbox" id="forceMobile" ${state.ui.forceMobile ? 'checked' : ''} /> 모바일 화면으로 보기</label>
   </div>
@@ -637,11 +626,6 @@ const boardTitle = state.ui.viewMode === 'week'
                 <p>${availableNow.slice(0, 5).map(r => r.short).join(', ') || '현재 기준으로 비어 있는 강의실이 없습니다.'}</p>
               </div>
               <div class="card summary-card">
-                <h3>오늘 남은 빈 시간</h3>
-                <strong>${remainingFree.length}건</strong>
-                <p>${remainingFree.slice(0, 2).map(item => `${item.room} ${item.start}~${item.end}`).join(' · ') || '오늘 남은 빈 시간이 없습니다.'}</p>
-              </div>
-              <div class="card summary-card">
                 <h3>내 예약</h3>
                 <strong>${myUpcoming.length}건</strong>
                 <p>${myUpcoming.slice(0, 2).map(r => `${formatDateLabel(r.date)} ${r.start} ${getRoom(r.roomId)?.short || ''}`).join(' · ') || '예정된 예약이 없습니다.'}</p>
@@ -670,20 +654,6 @@ const boardTitle = state.ui.viewMode === 'week'
                   ${mobileMode ? renderMobileBoard(user) : renderBoard(user)}
                 </div>
               </div>
-              <aside class="side-stack">
-                <section class="card side-card">
-                  <h3>오늘 남은 빈 시간</h3>
-                  <p class="sub">오늘 기준으로 앞으로 남아 있는 가장 가까운 빈 시간대입니다.</p>
-                  <div class="list">
-                    ${remainingFree.length ? remainingFree.map(item => `
-                      <div class="list-item">
-                        <strong>${escapeHtml(item.room)}</strong>
-                        <small>${escapeHtml(item.start)} ~ ${escapeHtml(item.end)}</small>
-                      </div>
-                    `).join('') : '<div class="empty-state">오늘 남은 빈 시간이 없습니다.</div>'}
-                  </div>
-                </section>
-              </aside>
             </section>
           </div>
         `;
@@ -715,7 +685,7 @@ function renderWeekBoard(user) {
         }
         const hasAnyVisibleSlot = dates.some(date => getVisibleSlotsForDate(date).length);
         if (!hasAnyVisibleSlot) {
-          return '<div class="empty-state" style="margin: 16px;">표시할 시간대가 없습니다. “오늘 남은 빈 시간만 보기”를 해제해 보세요.</div>';
+          return '<div class="empty-state" style="margin: 16px;">표시할 시간대가 없습니다.</div>';
         }
         const now = getNowInfo();
         let headRow1 = '<tr><th class="first-col" rowspan="2">강의실</th>';
@@ -779,7 +749,7 @@ function renderWeekBoard(user) {
           return '<div class="empty-state" style="margin: 16px;">현재 필터 조건에 맞는 강의실이 없습니다.</div>';
         }
         if (!slots.length) {
-          return '<div class="empty-state" style="margin: 16px;">표시할 시간대가 없습니다. “오늘 남은 빈 시간만 보기”를 해제해 보세요.</div>';
+          return '<div class="empty-state" style="margin: 16px;">표시할 시간대가 없습니다.</div>';
         }
         const now = getNowInfo();
         const head = `
@@ -942,7 +912,7 @@ const past = date < now.date || (date === now.date && timeToMinutes(slot) + slot
             showToast(error.message || '일정을 불러오지 못했습니다.', 'error');
           }
         });
-        ['availableNowOnly', 'remainingTodayOnly', 'myOnly', 'forceMobile'].forEach(key => {
+        ['availableNowOnly', 'myOnly', 'forceMobile'].forEach(key => {
           appView.querySelector(`#${key}`).addEventListener('change', (e) => {
             state.ui[key] = e.target.checked;
             saveUiState();
