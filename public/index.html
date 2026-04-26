@@ -596,6 +596,35 @@ button.primary:hover {
       background: linear-gradient(180deg, #fbfdff 0%, #ffffff 12%);
     }
 
+    .week-date-jump-row {
+      position: sticky;
+      left: 0;
+      z-index: 8;
+      display: flex;
+      gap: 8px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff 0%, #eef6ff 100%);
+      min-width: max-content;
+    }
+
+    .week-date-button {
+      min-width: 116px;
+      min-height: 38px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border-color: #b9cff5;
+      background: #ffffff;
+      color: #1749be;
+      font-weight: 900;
+    }
+
+    .week-date-button.active {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #ffffff;
+    }
+
     .schedule-table {
       width: max-content;
       min-width: 100%;

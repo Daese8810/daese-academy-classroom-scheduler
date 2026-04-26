@@ -671,6 +671,24 @@ const boardTitle = state.ui.viewMode === 'week'
         `;
       }
 
+      function renderWeekDateJumpButtons(dates) {
+        if (state.ui.viewMode !== 'week') return '';
+        return `
+          <div class="week-date-jump-row">
+            ${dates.map(date => `
+              <button
+                type="button"
+                class="week-date-button ${state.ui.selectedDate === date ? 'active' : ''}"
+                data-action="jump-week-date"
+                data-date="${escapeHtml(date)}"
+              >
+                ${escapeHtml(formatDateLabel(date))}
+              </button>
+            `).join('')}
+          </div>
+        `;
+      }
+
       function renderBoard(user) {
   return state.ui.viewMode === 'day'
     ? renderDayBoard(user, state.ui.selectedDate)
@@ -693,7 +711,7 @@ function renderWeekBoard(user) {
         for (const date of dates) {
           const slots = getVisibleSlotsForDate(date);
           if (!slots.length) continue;
-          headRow1 += `<th class="day-group" colspan="${slots.length}">${escapeHtml(formatDateLabel(date))}</th>`;
+          headRow1 += `<th class="day-group" colspan="${slots.length}" data-week-date="${escapeHtml(date)}">${escapeHtml(formatDateLabel(date))}</th>`;
           for (const slot of slots) {
             headRow2 += `<th>${escapeHtml(slot)}</th>`;
           }
@@ -703,6 +721,7 @@ function renderWeekBoard(user) {
 
         const rowsHtml = visibleRooms.map(room => renderWeekRoomRow(room, dates, user, now)).join('');
         return `
+          ${renderWeekDateJumpButtons(dates)}
           <table class="schedule-table week-table">
             <thead>${headRow1}${headRow2}</thead>
             <tbody>${rowsHtml}</tbody>
@@ -925,6 +944,18 @@ const past = date < now.date || (date === now.date && timeToMinutes(slot) + slot
         });
       }
 
+      function scrollWeekDateIntoView(date) {
+        const boardWrap = document.getElementById('boardWrap');
+        if (!boardWrap) return;
+        const target = Array.from(boardWrap.querySelectorAll('[data-week-date]'))
+          .find(el => el.getAttribute('data-week-date') === date);
+        if (!target) return;
+        boardWrap.scrollTo({
+          left: Math.max(0, target.offsetLeft - 150),
+          behavior: 'smooth'
+        });
+      }
+
       async function handleActionClick(e) {
         const action = e.currentTarget.getAttribute('data-action');
         if (!action) return;
@@ -992,6 +1023,16 @@ case 'set-slot-minutes':
   saveUiState();
   render();
   return;
+          case 'jump-week-date': {
+            const date = e.currentTarget.getAttribute('data-date');
+            if (!date) return;
+            state.ui.selectedDate = date;
+            state.ui.mobileSelectedDate = date;
+            saveUiState();
+            render();
+            setTimeout(() => scrollWeekDateIntoView(date), 0);
+            return;
+          }
           case 'new-reservation':
             openReservationModal({
               mode: 'create',
