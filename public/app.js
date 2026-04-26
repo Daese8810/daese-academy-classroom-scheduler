@@ -500,29 +500,32 @@ const boardTitle = state.ui.viewMode === 'week'
                 <span class="badge ${user.role === 'admin' ? 'admin' : ''}">${escapeHtml(user.id)} · ${escapeHtml(user.dept)}${user.role === 'admin' ? ' · 관리자' : ''}</span>
                 <span class="badge">현재 시각 ${escapeHtml(now.date)} ${escapeHtml(minutesToTime(Math.floor(now.actualMinutes / 60) * 60 + (now.actualMinutes % 60 >= 30 ? 30 : 0)))}</span>
                 <details class="quick-panel-dropdown">
-                  <summary class="ghost quick-panel-summary">바로보기</summary>
-                  <div class="quick-panel-dropdown-panel">
-                    <div class="quick-panel-grid">
-                      <section class="quick-panel-section">
-                        <h3>내 예약 바로보기</h3>
-                        <p class="sub">수정·취소가 필요한 일정을 바로 확인합니다.</p>
-                        <div class="list">
-                          ${myUpcoming.length ? myUpcoming.map(r => renderSideReservationItem(r)).join('') : '<div class="empty-state">현재 예정된 내 예약이 없습니다.</div>'}
-                        </div>
-                      </section>
-                      <section class="quick-panel-section">
-                        <h3>지금 비어 있는 강의실</h3>
-                        <p class="sub">현재 시각 기준으로 바로 선점 가능한 강의실입니다.</p>
-                        <div class="list">
-                          ${availableNow.length ? availableNow.slice(0, 10).map(room => `
-                            <div class="list-item">
-                              <strong>${escapeHtml(room.name)}</strong>
-                              <small>${escapeHtml(room.floor)} · ${room.type === 'seminar' ? '세미나실' : '일반 강의실'}</small>
-                            </div>
-                          `).join('') : '<div class="empty-state">현재 비어 있는 강의실이 없습니다.</div>'}
-                        </div>
-                      </section>
-                    </div>
+                  <summary class="ghost quick-panel-summary">내 예약 바로보기</summary>
+                  <div class="quick-panel-dropdown-panel quick-panel-dropdown-panel-narrow">
+                    <section class="quick-panel-section">
+                      <h3>내 예약 바로보기</h3>
+                      <p class="sub">수정·취소가 필요한 일정을 바로 확인합니다.</p>
+                      <div class="list">
+                        ${myUpcoming.length ? myUpcoming.map(r => renderSideReservationItem(r)).join('') : '<div class="empty-state">현재 예정된 내 예약이 없습니다.</div>'}
+                      </div>
+                    </section>
+                  </div>
+                </details>
+                <details class="quick-panel-dropdown">
+                  <summary class="ghost quick-panel-summary">지금 비어있는 강의실</summary>
+                  <div class="quick-panel-dropdown-panel quick-panel-dropdown-panel-narrow">
+                    <section class="quick-panel-section">
+                      <h3>지금 비어있는 강의실</h3>
+                      <p class="sub">현재 시각 기준으로 바로 선점 가능한 강의실입니다.</p>
+                      <div class="list">
+                        ${availableNow.length ? availableNow.slice(0, 10).map(room => `
+                          <div class="list-item">
+                            <strong>${escapeHtml(room.name)}</strong>
+                            <small>${escapeHtml(room.floor)} · ${room.type === 'seminar' ? '세미나실' : '일반 강의실'}</small>
+                          </div>
+                        `).join('') : '<div class="empty-state">현재 비어 있는 강의실이 없습니다.</div>'}
+                      </div>
+                    </section>
                   </div>
                 </details>
                 <button class="ghost" data-action="change-password">비밀번호 변경</button>
