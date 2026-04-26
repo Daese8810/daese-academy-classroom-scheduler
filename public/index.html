@@ -457,6 +457,21 @@ button.primary:hover {
       align-items: center;
     }
 
+    .toolbar-controls-row {
+      justify-content: flex-start;
+      align-items: center;
+    }
+
+    .toolbar-inline-controls {
+      flex: 1 1 760px;
+      min-width: 0;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
     .toolbar-summary-strip {
       flex: 1 1 620px;
       min-width: 520px;
@@ -1191,6 +1206,10 @@ button.primary:hover {
         flex-basis: 100%;
         min-width: 0;
         grid-template-columns: 1fr;
+      }
+      .toolbar-inline-controls {
+        flex-basis: 100%;
+        justify-content: flex-start;
       }
       .toolbar-summary-item { grid-template-columns: auto auto minmax(0, 1fr); }
       .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

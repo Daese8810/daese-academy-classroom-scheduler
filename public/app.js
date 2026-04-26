@@ -637,7 +637,7 @@ const boardTitle = state.ui.viewMode === 'week'
                   <span class="legend-item"><span class="legend-swatch" style="background: var(--gray-bg);"></span>필터 제외 예약</span>
                 </div>
               </div>
-              <div class="toolbar-row">
+              <div class="toolbar-row toolbar-controls-row">
                 <div class="group">
                   <select id="floorFilter">
                     <option value="all" ${state.ui.floor === 'all' ? 'selected' : ''}>전체 층</option>
@@ -659,35 +659,34 @@ const boardTitle = state.ui.viewMode === 'week'
   <option value="day" ${state.ui.viewMode === 'day' ? 'selected' : ''}>일간 보기</option>
 </select>
                 </div>
+                <div class="toolbar-inline-controls">
+                  <div class="chip-row">
+                    <button class="chip ${state.ui.dept === 'all' ? 'active' : ''}" data-action="quick-dept" data-dept="all">전체 보기</button>
+                    <button class="chip ${state.ui.dept === '영어과' ? 'active' : ''}" data-action="quick-dept" data-dept="영어과">영어과만 보기</button>
+                    <button class="chip ${state.ui.dept === '국어과' ? 'active' : ''}" data-action="quick-dept" data-dept="국어과">국어과만 보기</button>
+                    <details class="capacity-dropdown">
+                      <summary class="chip">강의실별 수용 인원 확인</summary>
+                      <div class="capacity-dropdown-panel">
+                        ${ROOM_CAPACITY.map(room => `
+                          <div class="capacity-row">
+                            <span>${escapeHtml(room.name)}</span>
+                            <strong>${room.capacity}명</strong>
+                          </div>
+                        `).join('')}
+                      </div>
+                    </details>
+                  </div>
+                  <div class="group">
+                    <label class="toggle-pill"><input type="checkbox" id="availableNowOnly" ${state.ui.availableNowOnly ? 'checked' : ''} /> 지금 비어 있는 강의실만 보기</label>
+                    <label class="toggle-pill"><input type="checkbox" id="myOnly" ${state.ui.myOnly ? 'checked' : ''} /> 내가 예약한 것만 보기</label>
+                    <label class="toggle-pill"><input type="checkbox" id="forceMobile" ${state.ui.forceMobile ? 'checked' : ''} /> 모바일 화면으로 보기</label>
+                  </div>
+                </div>
                 <div class="group">
                   <button class="primary" data-action="new-reservation">+ 빈 시간 예약</button>
                   ${user.role === 'admin' ? '<button class="warn" data-action="new-block">관리자 차단 추가</button>' : ''}
                 </div>
               </div>
-              <div class="toolbar-row">
-  <div class="chip-row">
-    <button class="chip ${state.ui.dept === 'all' ? 'active' : ''}" data-action="quick-dept" data-dept="all">전체 보기</button>
-    <button class="chip ${state.ui.dept === '영어과' ? 'active' : ''}" data-action="quick-dept" data-dept="영어과">영어과만 보기</button>
-    <button class="chip ${state.ui.dept === '국어과' ? 'active' : ''}" data-action="quick-dept" data-dept="국어과">국어과만 보기</button>
-    <details class="capacity-dropdown">
-  <summary class="chip">강의실별 수용 인원 확인</summary>
-  <div class="capacity-dropdown-panel">
-    ${ROOM_CAPACITY.map(room => `
-      <div class="capacity-row">
-        <span>${escapeHtml(room.name)}</span>
-        <strong>${room.capacity}명</strong>
-      </div>
-    `).join('')}
-  </div>
-</details>
-  </div>
-  <div class="group">
-    <label class="toggle-pill"><input type="checkbox" id="availableNowOnly" ${state.ui.availableNowOnly ? 'checked' : ''} /> 지금 비어 있는 강의실만 보기</label>
-    <label class="toggle-pill"><input type="checkbox" id="myOnly" ${state.ui.myOnly ? 'checked' : ''} /> 내가 예약한 것만 보기</label>
-    <label class="toggle-pill"><input type="checkbox" id="forceMobile" ${state.ui.forceMobile ? 'checked' : ''} /> 모바일 화면으로 보기</label>
-  </div>
-</div>
-
 <div class="toolbar-row" id="roomCapacityRow" style="display:none;">
   <div class="card" style="width:100%; padding:14px 16px; border-radius:14px; background:#fbfdff;">
     <div style="font-weight:700; margin-bottom:10px;">강의실별 수용 인원</div>
