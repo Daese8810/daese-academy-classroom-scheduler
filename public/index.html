@@ -244,6 +244,8 @@ button.primary:hover {
       width: 100%;
       margin: 0 auto;
       padding: 18px 18px 28px;
+      display: flex;
+      flex-direction: column;
     }
 
     .app-header {
@@ -510,6 +512,8 @@ button.primary:hover {
       display: grid;
       gap: 14px;
       grid-template-columns: repeat(3, minmax(0, 1fr));
+      order: 30;
+      margin-top: 14px;
     }
 
     .summary-card {
@@ -557,6 +561,7 @@ button.primary:hover {
       grid-template-columns: minmax(0, 1fr);
       gap: 16px;
       align-items: start;
+      order: 20;
     }
 
     .board-card {
@@ -603,11 +608,11 @@ button.primary:hover {
   position: sticky;
   top: 0;
   z-index: 4;
-  background: #f7faff;
+  background: linear-gradient(180deg, #dbeafe 0%, #eff6ff 100%);
   border-bottom: 1px solid var(--line);
   border-right: 1px solid var(--line);
       font-size: 12px;
-      color: #334155;
+      color: #123b8a;
       text-align: center;
       padding: 11px 6px;
       min-width: 56px;
@@ -617,7 +622,7 @@ button.primary:hover {
 .schedule-table thead th.day-group {
   font-size: 13px;
   font-weight: 800;
-  background: #eef4ff;
+  background: linear-gradient(180deg, #bfdbfe 0%, #dbeafe 100%);
   color: #1d4ed8;
   border-bottom: 1px solid #d0def8;
 }
@@ -646,11 +651,11 @@ button.primary:hover {
 /* 날짜줄의 왼쪽 첫 칸과 시간줄이 자연스럽게 보이도록 배경 유지 */
 .week-table thead tr:first-child th,
 .week-table thead tr:nth-child(2) th {
-  background: #f7faff;
+  background: linear-gradient(180deg, #dbeafe 0%, #eff6ff 100%);
 }
 
 .week-table thead tr:first-child th.day-group {
-  background: #eef4ff;
+  background: linear-gradient(180deg, #bfdbfe 0%, #dbeafe 100%);
 }
 
     .schedule-table thead th.first-col,
@@ -675,7 +680,7 @@ button.primary:hover {
     }
 
     .room-sub {
-      display: block;
+      display: none;
       font-size: 12px;
       color: var(--muted);
       margin-top: 4px;
