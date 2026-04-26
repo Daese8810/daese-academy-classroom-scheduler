@@ -16,7 +16,7 @@ const SLOT_END = 22 * 60; // 오후 10시
       const toastWrap = document.getElementById('toastWrap');
 
       let state = {
-  appName: '대세학원 대세학원 강의실 예약',
+  appName: '대세학원 강의실 예약',
   orgName: '대세영어 X 대세국어',
   users: [],
   rooms: [],
@@ -484,7 +484,7 @@ const boardTitle = state.ui.viewMode === 'week'
             <div class="app-header-inner">
               <div class="brand">
                 <h1>${escapeHtml(state.appName)}</h1>
-                <p>${escapeHtml(state.orgName)} · 6층, 7층 강의실· ${state.ui.slotMinutes}분 단위 예약</p>
+                <p>${escapeHtml(state.orgName)}</p>
               </div>
               <div class="user-toolbar">
                 <span class="badge ${user.role === 'admin' ? 'admin' : ''}">${escapeHtml(user.id)} · ${escapeHtml(user.dept)}${user.role === 'admin' ? ' · 관리자' : ''}</span>

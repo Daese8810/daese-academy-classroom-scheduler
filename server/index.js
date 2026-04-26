@@ -569,8 +569,8 @@ app.get('/api/bootstrap', async (req, res, next) => {
     ]);
     res.json({
       ok: true,
-      appName: '대세학원 강의실 공유 예약 보드',
-      orgName: '대세학원 · 대세영어 / 대세국어',
+      appName: '대세학원 강의실 예약',
+      orgName: '대세영어 X 대세국어',
       settings: {
         slotStart: SLOT_START,
         slotEnd: SLOT_END,

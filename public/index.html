@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>대세학원 강의실 공유 예약 보드</title>
+  <title>대세학원 강의실 예약</title>
   <style>
     :root {
-      --bg: #f4f7fb;
+      --bg: #eaf2ff;
       --panel: #ffffff;
-      --panel-soft: #f8fbff;
-      --line: #d8e2f0;
-      --line-strong: #c7d4e6;
+      --panel-soft: #eef5ff;
+      --line: #bfd3f4;
+      --line-strong: #8fb4ee;
       --text: #1f2937;
       --muted: #667085;
       --primary: #2563eb;
@@ -25,7 +25,7 @@
       --gray-bd: #97a3b6;
       --purple-bg: #ece8ff;
       --purple-bd: #7354e8;
-      --shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+      --shadow: 0 16px 34px rgba(37, 99, 235, 0.11);
       --radius: 18px;
       --radius-sm: 12px;
       --header-h: 72px;
@@ -36,7 +36,9 @@
     html, body { margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
-      background: radial-gradient(circle at top left, #eff6ff 0%, #f4f7fb 44%, #edf3fb 100%);
+      background:
+        radial-gradient(circle at top left, rgba(37, 99, 235, 0.14) 0%, transparent 32%),
+        linear-gradient(180deg, #eaf2ff 0%, #f6f9ff 42%, #edf4ff 100%);
       color: var(--text);
       min-height: 100vh;
     }
@@ -47,17 +49,20 @@
 
     button {
       border: 1px solid var(--line);
-      background: #fff;
-      color: var(--text);
+      background: linear-gradient(180deg, #ffffff 0%, #edf4ff 100%);
+      color: #1749be;
       border-radius: 12px;
       padding: 10px 14px;
       cursor: pointer;
       transition: 0.16s ease;
+      font-weight: 800;
+      box-shadow: 0 8px 18px rgba(37, 99, 235, 0.08);
     }
 
     button:hover {
       border-color: var(--line-strong);
       transform: translateY(-1px);
+      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.13);
     }
 
     button.primary {
@@ -73,7 +78,9 @@ button.primary:hover {
 }
 
     button.ghost {
-      background: var(--panel-soft);
+      background: #f0f6ff;
+      color: #1749be;
+      border-color: #b9cff5;
     }
 
     button.warn {
@@ -243,11 +250,12 @@ button.primary:hover {
       position: sticky;
       top: 0;
       z-index: 20;
-      background: rgba(244,247,251,0.92);
+      background: linear-gradient(135deg, rgba(29,78,216,0.98), rgba(37,99,235,0.94));
       backdrop-filter: blur(10px);
-      border-bottom: 1px solid rgba(216,226,240,0.7);
+      border-bottom: 1px solid rgba(255,255,255,0.24);
       margin: -18px -18px 0;
       padding: 14px 18px;
+      box-shadow: 0 12px 30px rgba(37, 99, 235, 0.2);
     }
 
     .app-header-inner {
@@ -262,12 +270,14 @@ button.primary:hover {
     .brand h1 {
       margin: 0;
       font-size: 24px;
+      color: white;
     }
 
     .brand p {
       margin: 4px 0 0;
-      color: var(--muted);
+      color: rgba(255,255,255,0.84);
       font-size: 13px;
+      font-weight: 700;
     }
 
     .user-toolbar {
@@ -286,8 +296,10 @@ button.primary:hover {
       padding: 8px 12px;
       font-size: 13px;
       border: 1px solid var(--line);
-      background: white;
+      background: rgba(255,255,255,0.92);
+      color: #1749be;
       white-space: nowrap;
+      font-weight: 800;
     }
 
     .badge.admin {
@@ -402,6 +414,8 @@ button.primary:hover {
       padding: 16px;
       display: grid;
       gap: 12px;
+      background: linear-gradient(135deg, #ffffff 0%, #eff6ff 100%);
+      border-color: #b9cff5;
     }
 
     .toolbar-row {
@@ -424,8 +438,10 @@ button.primary:hover {
       border-radius: 12px;
       border: 1px solid var(--line);
       padding: 10px 12px;
-      background: white;
+      background: #ffffff;
       min-height: 42px;
+      color: #0f2a55;
+      font-weight: 700;
     }
 
     .chip-row {
@@ -439,11 +455,12 @@ button.primary:hover {
       border-radius: 999px;
       padding: 9px 14px;
       border: 1px solid #cfe0ff;
-      background: #edf4ff;
+      background: linear-gradient(180deg, #ffffff 0%, #edf4ff 100%);
       color: #1749be;
       cursor: pointer;
-      font-weight: 600;
+      font-weight: 800;
       font-size: 13px;
+      box-shadow: 0 7px 14px rgba(37, 99, 235, 0.08);
     }
 
     .chip.active {
@@ -459,8 +476,10 @@ button.primary:hover {
       padding: 8px 12px;
       border-radius: 999px;
       border: 1px solid var(--line);
-      background: white;
+      background: #f8fbff;
       font-size: 13px;
+      color: #1749be;
+      font-weight: 800;
     }
 
     .toggle-pill input { accent-color: var(--primary); }
@@ -497,6 +516,8 @@ button.primary:hover {
       padding: 18px;
       position: relative;
       overflow: hidden;
+      background: linear-gradient(145deg, #ffffff 0%, #eef6ff 100%);
+      border-color: #b9cff5;
     }
 
     .summary-card h3 {
