@@ -56,6 +56,7 @@ app.use('/api/team-communication', (req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
+app.use('/api/team-communication', express.text({ type: 'text/plain', limit: '16kb' }));
 app.use(express.json({ limit: '256kb' }));
 app.use(express.urlencoded({ extended: false }));
 
@@ -669,8 +670,9 @@ app.get('/api/team-communication/snapshot', async (req, res, next) => {
 
 app.post('/api/team-communication/presence', async (req, res, next) => {
   try {
-    const person = String(req.body.person || '').trim();
-    const event = String(req.body.event || 'heartbeat').trim();
+    const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
+    const person = String(body.person || '').trim();
+    const event = String(body.event || 'heartbeat').trim();
     if (!isTeamCommunicationPerson(person)) {
       return jsonError(res, 400, '등록된 사용자만 접속 상태를 남길 수 있습니다.');
     }
