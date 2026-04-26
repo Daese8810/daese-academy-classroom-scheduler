@@ -458,6 +458,8 @@ button.primary:hover {
     }
 
     .toolbar-summary-strip {
+      flex: 1 1 620px;
+      min-width: 520px;
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 10px;
@@ -1185,7 +1187,11 @@ button.primary:hover {
     }
 
     @media (max-width: 1280px) {
-      .toolbar-summary-strip { grid-template-columns: 1fr; }
+      .toolbar-summary-strip {
+        flex-basis: 100%;
+        min-width: 0;
+        grid-template-columns: 1fr;
+      }
       .toolbar-summary-item { grid-template-columns: auto auto minmax(0, 1fr); }
       .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .main-grid { grid-template-columns: 1fr; }

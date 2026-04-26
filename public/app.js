@@ -613,14 +613,7 @@ const boardTitle = state.ui.viewMode === 'week'
 <button data-action="move-date" data-step="1">${escapeHtml(nextLabel)}</button>
                   <button class="ghost" data-action="go-today">오늘로</button>
                 </div>
-                <div class="group legend">
-                  <span class="legend-item"><span class="legend-swatch" style="background: var(--green-bg);"></span>사용 중</span>
-                  <span class="legend-item"><span class="legend-swatch" style="background: var(--amber-bg);"></span>세미나/행사</span>
-                  <span class="legend-item"><span class="legend-swatch" style="background: var(--red-bg);"></span>관리자 차단</span>
-                  <span class="legend-item"><span class="legend-swatch" style="background: var(--gray-bg);"></span>필터 제외 예약</span>
-                </div>
-              </div>
-              <div class="toolbar-summary-strip">
+                <div class="toolbar-summary-strip">
                 <div class="toolbar-summary-item">
                   <span>선택 기준</span>
                   <strong>${escapeHtml(VIEW_MODES[state.ui.viewMode])}</strong>
@@ -635,6 +628,13 @@ const boardTitle = state.ui.viewMode === 'week'
                   <span>내 예약</span>
                   <strong>${myUpcoming.length}건</strong>
                   <small>${myUpcoming.slice(0, 2).map(r => `${formatDateLabel(r.date)} ${r.start} ${getRoom(r.roomId)?.short || ''}`).join(' · ') || '예정된 예약이 없습니다.'}</small>
+                </div>
+              </div>
+                <div class="group legend">
+                  <span class="legend-item"><span class="legend-swatch" style="background: var(--green-bg);"></span>사용 중</span>
+                  <span class="legend-item"><span class="legend-swatch" style="background: var(--amber-bg);"></span>세미나/행사</span>
+                  <span class="legend-item"><span class="legend-swatch" style="background: var(--red-bg);"></span>관리자 차단</span>
+                  <span class="legend-item"><span class="legend-swatch" style="background: var(--gray-bg);"></span>필터 제외 예약</span>
                 </div>
               </div>
               <div class="toolbar-row">
