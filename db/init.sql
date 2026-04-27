@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS todo_tasks (
   title TEXT NOT NULL,
   due_date DATE NOT NULL,
   created_by TEXT NOT NULL,
+  assignees TEXT[] NOT NULL DEFAULT ARRAY['존','주디','스테이시','다나','조나단','스텐']::text[],
   attachment_name TEXT NOT NULL DEFAULT '',
   attachment_data_url TEXT NOT NULL DEFAULT '',
   attachment_size INTEGER NOT NULL DEFAULT 0,

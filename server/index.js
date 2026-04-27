@@ -14,6 +14,7 @@ const SLOT_MINUTES = 30;
 const SEOUL_OFFSET = '+09:00';
 const SEOUL_TZ = 'Asia/Seoul';
 const TEAM_COMMUNICATION_PEOPLE = ['스텐', '주디', '조나단', '존', '다나', '스테이시', '관리팀'];
+const TODO_DEFAULT_ASSIGNEES = ['존', '주디', '스테이시', '다나', '조나단', '스텐'];
 const TODO_DELETE_PEOPLE = ['스텐', '존'];
 const TEAM_COMMUNICATION_ONLINE_MS = 90 * 1000;
 const TODO_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
@@ -247,13 +248,18 @@ function teamAccessLogPublic(row) {
 
 function todoTaskPublic(row) {
   const attachmentName = String(row.attachment_name || '').trim();
+  const assignees = normalizeTodoAssignees(row.assignees);
+  const completedBy = (Array.isArray(row.completed_by) ? row.completed_by : [])
+    .map((name) => String(name || '').trim())
+    .filter((name) => assignees.includes(name));
   return {
     id: row.id,
     title: row.title,
     dueDate: row.due_date,
     createdBy: row.created_by,
     createdAt: row.created_at,
-    completedBy: Array.isArray(row.completed_by) ? row.completed_by : [],
+    assignees,
+    completedBy,
     attachment: attachmentName
       ? {
           name: attachmentName,
@@ -262,6 +268,23 @@ function todoTaskPublic(row) {
         }
       : null,
   };
+}
+
+function normalizeTodoAssignees(raw) {
+  const values = Array.isArray(raw)
+    ? raw
+    : String(raw || '').split(',');
+  const result = [];
+  for (const value of values) {
+    const name = String(value || '').trim();
+    if (name === '전체') {
+      return [...TODO_DEFAULT_ASSIGNEES];
+    }
+    if (TODO_DEFAULT_ASSIGNEES.includes(name) && !result.includes(name)) {
+      result.push(name);
+    }
+  }
+  return result.length ? result : [...TODO_DEFAULT_ASSIGNEES];
 }
 
 function normalizeTodoAttachment(raw) {
@@ -566,6 +589,7 @@ async function ensureTodoTables() {
       title TEXT NOT NULL,
       due_date DATE NOT NULL,
       created_by TEXT NOT NULL,
+      assignees TEXT[] NOT NULL DEFAULT ARRAY['존','주디','스테이시','다나','조나단','스텐']::text[],
       attachment_name TEXT NOT NULL DEFAULT '',
       attachment_data_url TEXT NOT NULL DEFAULT '',
       attachment_size INTEGER NOT NULL DEFAULT 0,
@@ -574,6 +598,7 @@ async function ensureTodoTables() {
     );
 
     ALTER TABLE todo_tasks
+      ADD COLUMN IF NOT EXISTS assignees TEXT[] NOT NULL DEFAULT ARRAY['존','주디','스테이시','다나','조나단','스텐']::text[],
       ADD COLUMN IF NOT EXISTS attachment_name TEXT NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS attachment_data_url TEXT NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS attachment_size INTEGER NOT NULL DEFAULT 0;
@@ -776,6 +801,7 @@ app.get('/api/todos', async (req, res, next) => {
               t.title,
               to_char(t.due_date, 'YYYY-MM-DD') AS due_date,
               t.created_by,
+              t.assignees,
               t.attachment_name,
               t.attachment_data_url,
               t.attachment_size,
@@ -802,6 +828,7 @@ app.post('/api/todos', async (req, res, next) => {
     const title = String(req.body.title || '').trim();
     const dueDate = String(req.body.dueDate || '').trim();
     const createdBy = String(req.body.createdBy || '').trim();
+    const assignees = normalizeTodoAssignees(req.body.assignees);
     let attachment;
     try {
       attachment = normalizeTodoAttachment(req.body.attachment);
@@ -824,14 +851,15 @@ app.post('/api/todos', async (req, res, next) => {
 
     const { rows } = await pool.query(
       `INSERT INTO todo_tasks (
-          title, due_date, created_by,
+          title, due_date, created_by, assignees,
           attachment_name, attachment_data_url, attachment_size
        )
-       VALUES ($1, $2::date, $3, $4, $5, $6)
+       VALUES ($1, $2::date, $3, $4::text[], $5, $6, $7)
        RETURNING id::text,
                  title,
                  to_char(due_date, 'YYYY-MM-DD') AS due_date,
                  created_by,
+                 assignees,
                  attachment_name,
                  attachment_data_url,
                  attachment_size,
@@ -841,6 +869,7 @@ app.post('/api/todos', async (req, res, next) => {
         title.slice(0, 300),
         dueDate,
         createdBy,
+        assignees,
         attachment.name,
         attachment.dataUrl,
         attachment.size,
@@ -858,6 +887,7 @@ app.put('/api/todos/:id', async (req, res, next) => {
     const title = String(req.body.title || '').trim();
     const dueDate = String(req.body.dueDate || '').trim();
     const updatedBy = String(req.body.updatedBy || '').trim();
+    const assignees = normalizeTodoAssignees(req.body.assignees);
     let attachment;
     try {
       attachment = normalizeTodoAttachment(req.body.attachment);
@@ -882,15 +912,17 @@ app.put('/api/todos/:id', async (req, res, next) => {
       `UPDATE todo_tasks
           SET title = $2,
               due_date = $3::date,
-              attachment_name = $4,
-              attachment_data_url = $5,
-              attachment_size = $6
+              assignees = $4::text[],
+              attachment_name = $5,
+              attachment_data_url = $6,
+              attachment_size = $7
         WHERE id = $1::uuid
           AND archived_at IS NULL`,
       [
         taskId,
         title.slice(0, 300),
         dueDate,
+        assignees,
         attachment.name,
         attachment.dataUrl,
         attachment.size,
@@ -899,12 +931,19 @@ app.put('/api/todos/:id', async (req, res, next) => {
     if (updated.rowCount === 0) {
       return jsonError(res, 404, '업무를 찾을 수 없습니다.');
     }
+    await pool.query(
+      `DELETE FROM todo_task_completions
+        WHERE task_id = $1::uuid
+          AND NOT (person_name = ANY($2::text[]))`,
+      [taskId, assignees]
+    );
 
     const { rows } = await pool.query(
       `SELECT t.id::text,
               t.title,
               to_char(t.due_date, 'YYYY-MM-DD') AS due_date,
               t.created_by,
+              t.assignees,
               t.attachment_name,
               t.attachment_data_url,
               t.attachment_size,
@@ -939,7 +978,7 @@ app.post('/api/todos/:id/completion', async (req, res, next) => {
     }
 
     const existing = await pool.query(
-      `SELECT id
+      `SELECT id, assignees
          FROM todo_tasks
         WHERE id = $1::uuid
           AND archived_at IS NULL`,
@@ -947,6 +986,10 @@ app.post('/api/todos/:id/completion', async (req, res, next) => {
     );
     if (existing.rowCount === 0) {
       return jsonError(res, 404, '업무를 찾을 수 없습니다.');
+    }
+    const assignees = normalizeTodoAssignees(existing.rows[0].assignees);
+    if (!assignees.includes(person)) {
+      return jsonError(res, 403, '이 업무의 대상자만 체크할 수 있습니다.');
     }
 
     if (completed) {
@@ -971,6 +1014,7 @@ app.post('/api/todos/:id/completion', async (req, res, next) => {
               t.title,
               to_char(t.due_date, 'YYYY-MM-DD') AS due_date,
               t.created_by,
+              t.assignees,
               t.attachment_name,
               t.attachment_data_url,
               t.attachment_size,
