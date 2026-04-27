@@ -15,6 +15,7 @@ const SEOUL_OFFSET = '+09:00';
 const SEOUL_TZ = 'Asia/Seoul';
 const TEAM_COMMUNICATION_PEOPLE = ['스텐', '주디', '조나단', '존', '다나', '스테이시', '관리팀'];
 const TEAM_COMMUNICATION_ONLINE_MS = 90 * 1000;
+const TODO_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
 const TODO_ALLOWED_ORIGINS = new Set([
   'https://daeseenglish.com',
   'https://www.daeseenglish.com',
@@ -75,6 +76,7 @@ app.use('/api/todos', (req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
+app.use('/api/todos', express.json({ limit: '8mb' }));
 app.use(express.json({ limit: '256kb' }));
 app.use(express.urlencoded({ extended: false }));
 
@@ -239,6 +241,7 @@ function teamAccessLogPublic(row) {
 }
 
 function todoTaskPublic(row) {
+  const attachmentName = String(row.attachment_name || '').trim();
   return {
     id: row.id,
     title: row.title,
@@ -246,7 +249,37 @@ function todoTaskPublic(row) {
     createdBy: row.created_by,
     createdAt: row.created_at,
     completedBy: Array.isArray(row.completed_by) ? row.completed_by : [],
+    attachment: attachmentName
+      ? {
+          name: attachmentName,
+          dataUrl: row.attachment_data_url || '',
+          size: Number(row.attachment_size || 0),
+        }
+      : null,
   };
+}
+
+function normalizeTodoAttachment(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return { name: '', dataUrl: '', size: 0 };
+  }
+
+  const name = String(raw.name || '').trim().slice(0, 200);
+  const dataUrl = String(raw.dataUrl || '').trim();
+  const size = Number(raw.size || 0);
+  if (!name && !dataUrl) {
+    return { name: '', dataUrl: '', size: 0 };
+  }
+  if (!name || !dataUrl || !dataUrl.startsWith('data:')) {
+    throw new Error('TODO_ATTACHMENT_INVALID');
+  }
+  if (!Number.isFinite(size) || size <= 0 || size > TODO_ATTACHMENT_MAX_BYTES) {
+    throw new Error('TODO_ATTACHMENT_TOO_LARGE');
+  }
+  if (dataUrl.length > Math.ceil(TODO_ATTACHMENT_MAX_BYTES * 1.45) + 2000) {
+    throw new Error('TODO_ATTACHMENT_TOO_LARGE');
+  }
+  return { name, dataUrl, size: Math.round(size) };
 }
 
 function getClientIp(req) {
@@ -528,9 +561,17 @@ async function ensureTodoTables() {
       title TEXT NOT NULL,
       due_date DATE NOT NULL,
       created_by TEXT NOT NULL,
+      attachment_name TEXT NOT NULL DEFAULT '',
+      attachment_data_url TEXT NOT NULL DEFAULT '',
+      attachment_size INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       archived_at TIMESTAMPTZ NULL
     );
+
+    ALTER TABLE todo_tasks
+      ADD COLUMN IF NOT EXISTS attachment_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS attachment_data_url TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS attachment_size INTEGER NOT NULL DEFAULT 0;
 
     CREATE TABLE IF NOT EXISTS todo_task_completions (
       task_id UUID NOT NULL REFERENCES todo_tasks(id) ON DELETE CASCADE,
@@ -730,6 +771,9 @@ app.get('/api/todos', async (req, res, next) => {
               t.title,
               to_char(t.due_date, 'YYYY-MM-DD') AS due_date,
               t.created_by,
+              t.attachment_name,
+              t.attachment_data_url,
+              t.attachment_size,
               t.created_at,
               COALESCE(
                 array_remove(array_agg(c.person_name ORDER BY c.completed_at), NULL),
@@ -753,6 +797,15 @@ app.post('/api/todos', async (req, res, next) => {
     const title = String(req.body.title || '').trim();
     const dueDate = String(req.body.dueDate || '').trim();
     const createdBy = String(req.body.createdBy || '').trim();
+    let attachment;
+    try {
+      attachment = normalizeTodoAttachment(req.body.attachment);
+    } catch (error) {
+      if (error.message === 'TODO_ATTACHMENT_TOO_LARGE') {
+        return jsonError(res, 400, '첨부 파일은 5MB 이하로 업로드해주세요.');
+      }
+      return jsonError(res, 400, '첨부 파일 형식이 올바르지 않습니다.');
+    }
 
     if (!isTeamCommunicationPerson(createdBy)) {
       return jsonError(res, 400, '교수팀 계정으로 로그인한 뒤 업무를 추가해주세요.');
@@ -765,15 +818,28 @@ app.post('/api/todos', async (req, res, next) => {
     }
 
     const { rows } = await pool.query(
-      `INSERT INTO todo_tasks (title, due_date, created_by)
-       VALUES ($1, $2::date, $3)
+      `INSERT INTO todo_tasks (
+          title, due_date, created_by,
+          attachment_name, attachment_data_url, attachment_size
+       )
+       VALUES ($1, $2::date, $3, $4, $5, $6)
        RETURNING id::text,
                  title,
                  to_char(due_date, 'YYYY-MM-DD') AS due_date,
                  created_by,
+                 attachment_name,
+                 attachment_data_url,
+                 attachment_size,
                  created_at,
                  ARRAY[]::text[] AS completed_by`,
-      [title.slice(0, 300), dueDate, createdBy]
+      [
+        title.slice(0, 300),
+        dueDate,
+        createdBy,
+        attachment.name,
+        attachment.dataUrl,
+        attachment.size,
+      ]
     );
     res.json({ ok: true, task: todoTaskPublic(rows[0]) });
   } catch (error) {
@@ -824,6 +890,9 @@ app.post('/api/todos/:id/completion', async (req, res, next) => {
               t.title,
               to_char(t.due_date, 'YYYY-MM-DD') AS due_date,
               t.created_by,
+              t.attachment_name,
+              t.attachment_data_url,
+              t.attachment_size,
               t.created_at,
               COALESCE(
                 array_remove(array_agg(c.person_name ORDER BY c.completed_at), NULL),

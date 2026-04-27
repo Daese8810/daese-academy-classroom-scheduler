@@ -93,6 +93,9 @@ CREATE TABLE IF NOT EXISTS todo_tasks (
   title TEXT NOT NULL,
   due_date DATE NOT NULL,
   created_by TEXT NOT NULL,
+  attachment_name TEXT NOT NULL DEFAULT '',
+  attachment_data_url TEXT NOT NULL DEFAULT '',
+  attachment_size INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   archived_at TIMESTAMPTZ NULL
 );
