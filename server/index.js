@@ -15,6 +15,12 @@ const SEOUL_OFFSET = '+09:00';
 const SEOUL_TZ = 'Asia/Seoul';
 const TEAM_COMMUNICATION_PEOPLE = ['스텐', '주디', '조나단', '존', '다나', '스테이시', '관리팀'];
 const TEAM_COMMUNICATION_ONLINE_MS = 90 * 1000;
+const TODO_ALLOWED_ORIGINS = new Set([
+  'https://daeseenglish.com',
+  'https://www.daeseenglish.com',
+  'http://localhost',
+  'http://127.0.0.1',
+]);
 const DASHBOARD_ALLOWED_ORIGINS = new Set([
   'https://daese8810.github.io',
   'https://daeseaca.cafe24.com',
@@ -57,6 +63,18 @@ app.use('/api/team-communication', (req, res, next) => {
   next();
 });
 app.use('/api/team-communication', express.text({ type: 'text/plain', limit: '16kb' }));
+app.use('/api/todos', (req, res, next) => {
+  const origin = String(req.headers.origin || '');
+  const originRoot = origin.replace(/:\d+$/, '');
+  if (TODO_ALLOWED_ORIGINS.has(origin) || TODO_ALLOWED_ORIGINS.has(originRoot)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 app.use(express.json({ limit: '256kb' }));
 app.use(express.urlencoded({ extended: false }));
 
@@ -217,6 +235,17 @@ function teamAccessLogPublic(row) {
     person: row.person_name,
     event: row.event_type,
     createdAt: row.created_at,
+  };
+}
+
+function todoTaskPublic(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    dueDate: row.due_date,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    completedBy: Array.isArray(row.completed_by) ? row.completed_by : [],
   };
 }
 
@@ -492,6 +521,32 @@ async function ensureTeamCommunicationTables() {
   }
 }
 
+async function ensureTodoTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS todo_tasks (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      title TEXT NOT NULL,
+      due_date DATE NOT NULL,
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      archived_at TIMESTAMPTZ NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS todo_task_completions (
+      task_id UUID NOT NULL REFERENCES todo_tasks(id) ON DELETE CASCADE,
+      person_name TEXT NOT NULL,
+      completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (task_id, person_name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_todo_tasks_due_date
+      ON todo_tasks (due_date, created_at)
+      WHERE archived_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_todo_task_completions_person
+      ON todo_task_completions (person_name, completed_at DESC);
+  `);
+}
+
 async function authMiddleware(req, res, next) {
   try {
     const cookies = parseCookies(req.headers.cookie || '');
@@ -664,6 +719,127 @@ app.get('/api/team-communication/snapshot', async (req, res, next) => {
       accessLogs: accessLogRes.rows.map(teamAccessLogPublic),
     });
   } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/todos', async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT t.id::text,
+              t.title,
+              to_char(t.due_date, 'YYYY-MM-DD') AS due_date,
+              t.created_by,
+              t.created_at,
+              COALESCE(
+                array_remove(array_agg(c.person_name ORDER BY c.completed_at), NULL),
+                ARRAY[]::text[]
+              ) AS completed_by
+         FROM todo_tasks t
+         LEFT JOIN todo_task_completions c ON c.task_id = t.id
+        WHERE t.archived_at IS NULL
+        GROUP BY t.id
+        ORDER BY t.due_date ASC, t.created_at ASC
+        LIMIT 300`
+    );
+    res.json({ ok: true, tasks: rows.map(todoTaskPublic) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/todos', async (req, res, next) => {
+  try {
+    const title = String(req.body.title || '').trim();
+    const dueDate = String(req.body.dueDate || '').trim();
+    const createdBy = String(req.body.createdBy || '').trim();
+
+    if (!isTeamCommunicationPerson(createdBy)) {
+      return jsonError(res, 400, '교수팀 계정으로 로그인한 뒤 업무를 추가해주세요.');
+    }
+    if (!title) {
+      return jsonError(res, 400, '업무 내용을 입력해주세요.');
+    }
+    if (!isValidDate(dueDate)) {
+      return jsonError(res, 400, '마감일을 선택해주세요.');
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO todo_tasks (title, due_date, created_by)
+       VALUES ($1, $2::date, $3)
+       RETURNING id::text,
+                 title,
+                 to_char(due_date, 'YYYY-MM-DD') AS due_date,
+                 created_by,
+                 created_at,
+                 ARRAY[]::text[] AS completed_by`,
+      [title.slice(0, 300), dueDate, createdBy]
+    );
+    res.json({ ok: true, task: todoTaskPublic(rows[0]) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/todos/:id/completion', async (req, res, next) => {
+  try {
+    const taskId = String(req.params.id || '').trim();
+    const person = String(req.body.person || '').trim();
+    const completed = req.body.completed === true || String(req.body.completed || '').toLowerCase() === 'true';
+
+    if (!isTeamCommunicationPerson(person)) {
+      return jsonError(res, 400, '교수팀 계정으로 로그인한 뒤 체크해주세요.');
+    }
+
+    const existing = await pool.query(
+      `SELECT id
+         FROM todo_tasks
+        WHERE id = $1::uuid
+          AND archived_at IS NULL`,
+      [taskId]
+    );
+    if (existing.rowCount === 0) {
+      return jsonError(res, 404, '업무를 찾을 수 없습니다.');
+    }
+
+    if (completed) {
+      await pool.query(
+        `INSERT INTO todo_task_completions (task_id, person_name)
+         VALUES ($1::uuid, $2)
+         ON CONFLICT (task_id, person_name)
+         DO UPDATE SET completed_at = NOW()`,
+        [taskId, person]
+      );
+    } else {
+      await pool.query(
+        `DELETE FROM todo_task_completions
+          WHERE task_id = $1::uuid
+            AND person_name = $2`,
+        [taskId, person]
+      );
+    }
+
+    const { rows } = await pool.query(
+      `SELECT t.id::text,
+              t.title,
+              to_char(t.due_date, 'YYYY-MM-DD') AS due_date,
+              t.created_by,
+              t.created_at,
+              COALESCE(
+                array_remove(array_agg(c.person_name ORDER BY c.completed_at), NULL),
+                ARRAY[]::text[]
+              ) AS completed_by
+         FROM todo_tasks t
+         LEFT JOIN todo_task_completions c ON c.task_id = t.id
+        WHERE t.id = $1::uuid
+        GROUP BY t.id`,
+      [taskId]
+    );
+    res.json({ ok: true, task: todoTaskPublic(rows[0]) });
+  } catch (error) {
+    if (error && error.code === '22P02') {
+      return jsonError(res, 400, '업무 ID가 올바르지 않습니다.');
+    }
     next(error);
   }
 });
@@ -1090,6 +1266,7 @@ setInterval(() => {
 async function start() {
   await pool.query('SELECT 1');
   await ensureTeamCommunicationTables();
+  await ensureTodoTables();
   app.listen(PORT, () => {
     console.log(`대세학원 강의실 예약 서버가 포트 ${PORT}에서 실행 중입니다.`);
   });

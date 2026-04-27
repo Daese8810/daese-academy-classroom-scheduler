@@ -88,6 +88,25 @@ CREATE INDEX IF NOT EXISTS idx_team_messages_recipient_time ON team_messages (re
 CREATE INDEX IF NOT EXISTS idx_team_messages_sender_time ON team_messages (sender_name, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_team_access_logs_time ON team_access_logs (created_at DESC);
 
+CREATE TABLE IF NOT EXISTS todo_tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  due_date DATE NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  archived_at TIMESTAMPTZ NULL
+);
+
+CREATE TABLE IF NOT EXISTS todo_task_completions (
+  task_id UUID NOT NULL REFERENCES todo_tasks(id) ON DELETE CASCADE,
+  person_name TEXT NOT NULL,
+  completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (task_id, person_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_todo_tasks_due_date ON todo_tasks (due_date, created_at) WHERE archived_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_todo_task_completions_person ON todo_task_completions (person_name, completed_at DESC);
+
 DO $$
 BEGIN
   IF NOT EXISTS (
