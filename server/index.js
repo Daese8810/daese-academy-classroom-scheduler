@@ -17,7 +17,7 @@ const SEOUL_TZ = 'Asia/Seoul';
 const TEAM_COMMUNICATION_PEOPLE = ['스텐', '주디', '조나단', '존', '다나', '스테이시', '관리팀'];
 const TODO_DEFAULT_ASSIGNEES = ['존', '주디', '스테이시', '다나', '조나단', '스텐'];
 const TODO_DELETE_PEOPLE = ['스텐', '존'];
-const TODO_DAILY_CLINIC_TITLE = '클리닉표 작성 및 확인';
+const TODO_DAILY_AUTO_TITLES = ['클리닉표 작성 및 확인', '반별 과제 안내'];
 const TEAM_COMMUNICATION_ONLINE_MS = 90 * 1000;
 const TODO_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
 const CLINIC_LISTENING_GAS_URL = process.env.CLINIC_LISTENING_GAS_URL ||
@@ -299,7 +299,7 @@ function todoTaskPublic(row) {
   };
 }
 
-async function ensureDailyClinicTodoTask() {
+async function ensureDailyAutoTodoTasks() {
   const { rows } = await pool.query(
     `SELECT (NOW() AT TIME ZONE 'Asia/Seoul')::date AS today,
             EXTRACT(ISODOW FROM (NOW() AT TIME ZONE 'Asia/Seoul'))::int AS day_of_week`
@@ -310,24 +310,26 @@ async function ensureDailyClinicTodoTask() {
     return;
   }
 
-  await pool.query(
-    `INSERT INTO todo_tasks (title, due_date, created_by, assignees)
-     SELECT $1, $2::date, $3, $4::text[]
-      WHERE NOT EXISTS (
-        SELECT 1
-          FROM todo_tasks
-         WHERE title = $1
-           AND due_date = $2::date
-      )`,
-    [TODO_DAILY_CLINIC_TITLE, today, '자동 생성', TODO_DEFAULT_ASSIGNEES]
-  );
+  for (const title of TODO_DAILY_AUTO_TITLES) {
+    await pool.query(
+      `INSERT INTO todo_tasks (title, due_date, created_by, assignees)
+       SELECT $1, $2::date, $3, $4::text[]
+        WHERE NOT EXISTS (
+          SELECT 1
+            FROM todo_tasks
+           WHERE title = $1
+             AND due_date = $2::date
+        )`,
+      [title, today, '자동 생성', TODO_DEFAULT_ASSIGNEES]
+    );
+  }
 }
 
-async function archiveCompletedPastDailyClinicTodoTasks() {
+async function archiveCompletedPastDailyAutoTodoTasks() {
   await pool.query(
     `UPDATE todo_tasks t
         SET archived_at = NOW()
-      WHERE t.title = $1
+      WHERE t.title = ANY($1::text[])
         AND t.created_by = $2
         AND t.archived_at IS NULL
         AND t.due_date < (NOW() AT TIME ZONE 'Asia/Seoul')::date
@@ -342,7 +344,7 @@ async function archiveCompletedPastDailyClinicTodoTasks() {
                 AND c.person_name = assignee.person_name
            )
         )`,
-    [TODO_DAILY_CLINIC_TITLE, '자동 생성']
+    [TODO_DAILY_AUTO_TITLES, '자동 생성']
   );
 }
 
@@ -1034,8 +1036,8 @@ app.get('/api/team-communication/snapshot', async (req, res, next) => {
 
 app.get('/api/todos', async (req, res, next) => {
   try {
-    await archiveCompletedPastDailyClinicTodoTasks();
-    await ensureDailyClinicTodoTask();
+    await archiveCompletedPastDailyAutoTodoTasks();
+    await ensureDailyAutoTodoTasks();
 
     const { rows } = await pool.query(
       `SELECT t.id::text,
