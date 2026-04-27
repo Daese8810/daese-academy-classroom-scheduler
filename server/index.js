@@ -22,7 +22,7 @@ const TODO_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
 const CLINIC_LISTENING_GAS_URL = process.env.CLINIC_LISTENING_GAS_URL ||
   'https://script.google.com/macros/s/AKfycbyTm_Plkg1I9GA1tTBbJWiYaFJI2Tuachrbwo_ZpGLQD4JpskyNe0H2KhEG688qMIPLHw/exec';
 const CLINIC_LISTENING_GRADES = ['초등부', '중1', '중2', '중3', '고1', '고2', '초등부 Starter'];
-const CLINIC_LISTENING_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_LISTENING_UPLOAD_MAX_BYTES || 30 * 1024 * 1024);
+const CLINIC_LISTENING_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_LISTENING_UPLOAD_MAX_BYTES || 50 * 1024 * 1024);
 const UPLOAD_ROOT = process.env.UPLOAD_ROOT || path.join(__dirname, '..', 'uploads');
 const CLINIC_LISTENING_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening');
 const TODO_ALLOWED_ORIGINS = new Set([
@@ -98,7 +98,7 @@ app.use('/api/clinic-listening-materials', (req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
-app.use('/api/clinic-listening-materials', express.json({ limit: '40mb' }));
+app.use('/api/clinic-listening-materials', express.json({ limit: '80mb' }));
 app.use('/uploads', express.static(UPLOAD_ROOT, {
   etag: true,
   maxAge: '7d',
