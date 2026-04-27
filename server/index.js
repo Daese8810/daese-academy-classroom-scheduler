@@ -913,6 +913,30 @@ app.post('/api/todos/:id/completion', async (req, res, next) => {
   }
 });
 
+app.delete('/api/todos/:id', async (req, res, next) => {
+  try {
+    const taskId = String(req.params.id || '').trim();
+    const person = String(req.query.person || req.body?.person || '').trim();
+    if (!isTeamCommunicationPerson(person)) {
+      return jsonError(res, 400, '교수팀 계정으로 로그인한 뒤 삭제해주세요.');
+    }
+
+    const result = await pool.query(
+      `UPDATE todo_tasks
+          SET archived_at = NOW()
+        WHERE id = $1::uuid
+          AND archived_at IS NULL`,
+      [taskId]
+    );
+    res.json({ ok: true, deletedCount: result.rowCount });
+  } catch (error) {
+    if (error && error.code === '22P02') {
+      return jsonError(res, 400, '업무 ID가 올바르지 않습니다.');
+    }
+    next(error);
+  }
+});
+
 app.post('/api/team-communication/presence', async (req, res, next) => {
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
