@@ -1,5 +1,6 @@
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
 const express = require('express');
 const { Pool } = require('pg');
 
@@ -18,6 +19,12 @@ const TODO_DEFAULT_ASSIGNEES = ['존', '주디', '스테이시', '다나', '조�
 const TODO_DELETE_PEOPLE = ['스텐', '존'];
 const TEAM_COMMUNICATION_ONLINE_MS = 90 * 1000;
 const TODO_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+const CLINIC_LISTENING_GAS_URL = process.env.CLINIC_LISTENING_GAS_URL ||
+  'https://script.google.com/macros/s/AKfycbyTm_Plkg1I9GA1tTBbJWiYaFJI2Tuachrbwo_ZpGLQD4JpskyNe0H2KhEG688qMIPLHw/exec';
+const CLINIC_LISTENING_GRADES = ['초등부', '중1', '중2', '중3', '고1', '고2', '초등부 Starter'];
+const CLINIC_LISTENING_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_LISTENING_UPLOAD_MAX_BYTES || 30 * 1024 * 1024);
+const UPLOAD_ROOT = process.env.UPLOAD_ROOT || path.join(__dirname, '..', 'uploads');
+const CLINIC_LISTENING_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening');
 const TODO_ALLOWED_ORIGINS = new Set([
   'https://daeseenglish.com',
   'https://www.daeseenglish.com',
@@ -79,6 +86,27 @@ app.use('/api/todos', (req, res, next) => {
   next();
 });
 app.use('/api/todos', express.json({ limit: '8mb' }));
+app.use('/api/clinic-listening-materials', (req, res, next) => {
+  const origin = String(req.headers.origin || '');
+  const originRoot = origin.replace(/:\d+$/, '');
+  if (TODO_ALLOWED_ORIGINS.has(origin) || TODO_ALLOWED_ORIGINS.has(originRoot)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+app.use('/api/clinic-listening-materials', express.json({ limit: '40mb' }));
+app.use('/uploads', express.static(UPLOAD_ROOT, {
+  etag: true,
+  maxAge: '7d',
+  setHeaders(res) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+  },
+}));
 app.use(express.json({ limit: '256kb' }));
 app.use(express.urlencoded({ extended: false }));
 
@@ -308,6 +336,140 @@ function normalizeTodoAttachment(raw) {
     throw new Error('TODO_ATTACHMENT_TOO_LARGE');
   }
   return { name, dataUrl, size: Math.round(size) };
+}
+
+function publicBaseUrl(req) {
+  const configured = String(process.env.PUBLIC_BASE_URL || APP_URL || '').replace(/\/+$/, '');
+  if (configured && !configured.includes('localhost') && !configured.includes('127.0.0.1')) {
+    return configured;
+  }
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || 'daeseaca.cafe24.com').split(',')[0].trim();
+  if (host && !host.includes('localhost') && !host.includes('127.0.0.1')) {
+    return `${proto || 'https'}://${host}`;
+  }
+  return 'https://daeseaca.cafe24.com';
+}
+
+function normalizeClinicListeningGrade(raw) {
+  const grade = String(raw || '').trim();
+  if (grade === 'Starter') return '초등부 Starter';
+  return CLINIC_LISTENING_GRADES.includes(grade) ? grade : '';
+}
+
+function normalizeClinicListeningDayNumber(raw) {
+  const value = Number(String(raw || '').replace(/[^\d]/g, ''));
+  return Number.isInteger(value) && value >= 1 && value <= 20 ? value : 0;
+}
+
+function normalizeClinicListeningAnswers(raw) {
+  const source = Array.isArray(raw) ? raw.join(',') : String(raw || '');
+  return (source.match(/\d/g) || []).join(',');
+}
+
+function clinicListeningMaterialPublic(row) {
+  return {
+    grade: row.grade,
+    day: `Day ${row.day_number}`,
+    answers: row.answers || '',
+    link: row.link || '',
+    updatedAt: row.updated_at || null,
+  };
+}
+
+function sanitizeUploadFileName(name) {
+  const raw = String(name || 'clinic-listening-file').trim();
+  const ext = path.extname(raw).toLowerCase().replace(/[^a-z0-9.]/g, '').slice(0, 12);
+  return `${Date.now()}-${crypto.randomUUID()}${ext || '.bin'}`;
+}
+
+async function saveClinicListeningUpload(req, rawFile, grade, dayNumber) {
+  if (!rawFile || typeof rawFile !== 'object') return '';
+  const dataUrl = String(rawFile.dataUrl || '').trim();
+  const match = /^data:([^;,]+)?;base64,(.+)$/s.exec(dataUrl);
+  if (!match) {
+    throw new Error('CLINIC_LISTENING_FILE_INVALID');
+  }
+  const buffer = Buffer.from(match[2], 'base64');
+  const declaredSize = Number(rawFile.size || 0);
+  if (
+    !buffer.length ||
+    buffer.length > CLINIC_LISTENING_UPLOAD_MAX_BYTES ||
+    (Number.isFinite(declaredSize) && declaredSize > 0 && declaredSize > CLINIC_LISTENING_UPLOAD_MAX_BYTES)
+  ) {
+    throw new Error('CLINIC_LISTENING_FILE_TOO_LARGE');
+  }
+
+  await fs.promises.mkdir(CLINIC_LISTENING_UPLOAD_DIR, { recursive: true });
+  const safeName = sanitizeUploadFileName(rawFile.name || `clinic-listening-${grade}-day-${dayNumber}`);
+  await fs.promises.writeFile(path.join(CLINIC_LISTENING_UPLOAD_DIR, safeName), buffer, { flag: 'wx' });
+  return `${publicBaseUrl(req)}/uploads/clinic-listening/${encodeURIComponent(safeName)}`;
+}
+
+async function fetchClinicListeningGasJson(params) {
+  if (!CLINIC_LISTENING_GAS_URL) return null;
+  const url = new URL(CLINIC_LISTENING_GAS_URL);
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
+  const response = await fetch(url, { method: 'GET' });
+  if (!response.ok) return null;
+  const text = await response.text();
+  if (!text || text.trimStart().startsWith('<')) return null;
+  return JSON.parse(text);
+}
+
+async function importClinicListeningMaterialsFromGas(grade) {
+  const decoded = await fetchClinicListeningGasJson({ grade }).catch(() => null);
+  if (!Array.isArray(decoded)) return;
+  for (const item of decoded) {
+    const dayNumber = normalizeClinicListeningDayNumber(item && item.day);
+    const answers = normalizeClinicListeningAnswers(item && item.answers);
+    const link = String((item && item.link) || '').trim();
+    if (!dayNumber || !answers || !link) continue;
+    await pool.query(
+      `INSERT INTO clinic_listening_materials (grade, day_number, answers, link, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (grade, day_number)
+       DO UPDATE SET answers = EXCLUDED.answers,
+                     link = EXCLUDED.link,
+                     updated_at = NOW()`,
+      [grade, dayNumber, answers, link]
+    );
+  }
+}
+
+async function importClinicListeningBookTitleFromGas(grade) {
+  const decoded = await fetchClinicListeningGasJson({
+    action: 'listeningBookTitle',
+    grade,
+  }).catch(() => null);
+  if (!decoded || decoded.ok !== true) return '';
+  const title = String(decoded.title || '').trim();
+  if (!title) return '';
+  await pool.query(
+    `INSERT INTO clinic_listening_book_titles (grade, title, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (grade)
+     DO UPDATE SET title = EXCLUDED.title,
+                   updated_at = NOW()`,
+    [grade, title]
+  );
+  return title;
+}
+
+function postClinicListeningToGas(body) {
+  if (!CLINIC_LISTENING_GAS_URL) return;
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(body)) {
+    params.set(key, String(value ?? ''));
+  }
+  fetch(CLINIC_LISTENING_GAS_URL, {
+    method: 'POST',
+    body: params,
+  }).catch((error) => {
+    console.error('clinic listening GAS sync failed:', error && error.message ? error.message : error);
+  });
 }
 
 function getClientIp(req) {
@@ -615,6 +777,28 @@ async function ensureTodoTables() {
       WHERE archived_at IS NULL;
     CREATE INDEX IF NOT EXISTS idx_todo_task_completions_person
       ON todo_task_completions (person_name, completed_at DESC);
+  `);
+}
+
+async function ensureClinicListeningMaterialTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS clinic_listening_book_titles (
+      grade TEXT PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS clinic_listening_materials (
+      grade TEXT NOT NULL,
+      day_number INTEGER NOT NULL CHECK (day_number BETWEEN 1 AND 20),
+      answers TEXT NOT NULL DEFAULT '',
+      link TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (grade, day_number)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_clinic_listening_materials_grade_day
+      ON clinic_listening_materials (grade, day_number);
   `);
 }
 
@@ -1062,6 +1246,174 @@ app.delete('/api/todos/:id', async (req, res, next) => {
   }
 });
 
+app.get('/api/clinic-listening-materials', async (req, res, next) => {
+  try {
+    const grade = normalizeClinicListeningGrade(req.query.grade);
+    if (!grade) {
+      return jsonError(res, 400, '지원하지 않는 학년/부서입니다.');
+    }
+
+    let { rows } = await pool.query(
+      `SELECT grade, day_number, answers, link, updated_at
+         FROM clinic_listening_materials
+        WHERE grade = $1
+        ORDER BY day_number ASC`,
+      [grade]
+    );
+
+    if (rows.length === 0) {
+      await importClinicListeningMaterialsFromGas(grade);
+      const refreshed = await pool.query(
+        `SELECT grade, day_number, answers, link, updated_at
+           FROM clinic_listening_materials
+          WHERE grade = $1
+          ORDER BY day_number ASC`,
+        [grade]
+      );
+      rows = refreshed.rows;
+    }
+
+    res.json({ ok: true, materials: rows.map(clinicListeningMaterialPublic) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/clinic-listening-materials/book-title', async (req, res, next) => {
+  try {
+    const grade = normalizeClinicListeningGrade(req.query.grade);
+    if (!grade) {
+      return jsonError(res, 400, '지원하지 않는 학년/부서입니다.');
+    }
+
+    let { rows } = await pool.query(
+      `SELECT grade, title, updated_at
+         FROM clinic_listening_book_titles
+        WHERE grade = $1
+        LIMIT 1`,
+      [grade]
+    );
+
+    if (rows.length === 0) {
+      await importClinicListeningBookTitleFromGas(grade);
+      const refreshed = await pool.query(
+        `SELECT grade, title, updated_at
+           FROM clinic_listening_book_titles
+          WHERE grade = $1
+          LIMIT 1`,
+        [grade]
+      );
+      rows = refreshed.rows;
+    }
+
+    res.json({
+      ok: true,
+      grade,
+      title: rows[0] ? rows[0].title || '' : '',
+      updatedAt: rows[0] ? rows[0].updated_at || null : null,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/clinic-listening-materials/book-title', async (req, res, next) => {
+  try {
+    const grade = normalizeClinicListeningGrade(req.body.grade);
+    const title = String(req.body.title || '').trim().slice(0, 200);
+    if (!grade) {
+      return jsonError(res, 400, '지원하지 않는 학년/부서입니다.');
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO clinic_listening_book_titles (grade, title, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (grade)
+       DO UPDATE SET title = EXCLUDED.title,
+                     updated_at = NOW()
+       RETURNING grade, title, updated_at`,
+      [grade, title]
+    );
+
+    postClinicListeningToGas({
+      action: 'saveListeningBookTitle',
+      grade,
+      title,
+    });
+
+    res.json({
+      ok: true,
+      action: 'saveListeningBookTitle',
+      grade: rows[0].grade,
+      title: rows[0].title,
+      updatedAt: rows[0].updated_at,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/clinic-listening-materials', async (req, res, next) => {
+  try {
+    const grade = normalizeClinicListeningGrade(req.body.grade);
+    const dayNumber = normalizeClinicListeningDayNumber(req.body.dayNumber || req.body.day);
+    const answers = normalizeClinicListeningAnswers(req.body.answers);
+    let link = String(req.body.link || '').trim();
+    if (!grade) {
+      return jsonError(res, 400, '지원하지 않는 학년/부서입니다.');
+    }
+    if (!dayNumber) {
+      return jsonError(res, 400, 'Day 1부터 Day 20까지만 저장할 수 있습니다.');
+    }
+    if (!answers) {
+      return jsonError(res, 400, '정답을 입력해주세요.');
+    }
+
+    try {
+      const uploadedLink = await saveClinicListeningUpload(req, req.body.file, grade, dayNumber);
+      if (uploadedLink) {
+        link = uploadedLink;
+      }
+    } catch (error) {
+      if (error.message === 'CLINIC_LISTENING_FILE_TOO_LARGE') {
+        return jsonError(res, 400, '듣기 파일은 30MB 이하로 업로드해주세요.');
+      }
+      return jsonError(res, 400, '듣기 파일 형식이 올바르지 않습니다.');
+    }
+
+    if (!link) {
+      return jsonError(res, 400, '파일을 업로드하거나 URL을 입력해주세요.');
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO clinic_listening_materials (grade, day_number, answers, link, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (grade, day_number)
+       DO UPDATE SET answers = EXCLUDED.answers,
+                     link = EXCLUDED.link,
+                     updated_at = NOW()
+       RETURNING grade, day_number, answers, link, updated_at`,
+      [grade, dayNumber, answers, link]
+    );
+
+    postClinicListeningToGas({
+      action: 'saveListeningMaterial',
+      grade,
+      day: `Day ${dayNumber}`,
+      answers,
+      link,
+    });
+
+    res.json({
+      ok: true,
+      action: 'saveListeningMaterial',
+      material: clinicListeningMaterialPublic(rows[0]),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/team-communication/presence', async (req, res, next) => {
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
@@ -1485,6 +1837,7 @@ async function start() {
   await pool.query('SELECT 1');
   await ensureTeamCommunicationTables();
   await ensureTodoTables();
+  await ensureClinicListeningMaterialTables();
   app.listen(PORT, () => {
     console.log(`대세학원 강의실 예약 서버가 포트 ${PORT}에서 실행 중입니다.`);
   });

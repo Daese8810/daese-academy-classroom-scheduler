@@ -111,6 +111,24 @@ CREATE TABLE IF NOT EXISTS todo_task_completions (
 CREATE INDEX IF NOT EXISTS idx_todo_tasks_due_date ON todo_tasks (due_date, created_at) WHERE archived_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_todo_task_completions_person ON todo_task_completions (person_name, completed_at DESC);
 
+CREATE TABLE IF NOT EXISTS clinic_listening_book_titles (
+  grade TEXT PRIMARY KEY,
+  title TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS clinic_listening_materials (
+  grade TEXT NOT NULL,
+  day_number INTEGER NOT NULL CHECK (day_number BETWEEN 1 AND 20),
+  answers TEXT NOT NULL DEFAULT '',
+  link TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (grade, day_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_clinic_listening_materials_grade_day
+  ON clinic_listening_materials (grade, day_number);
+
 DO $$
 BEGIN
   IF NOT EXISTS (

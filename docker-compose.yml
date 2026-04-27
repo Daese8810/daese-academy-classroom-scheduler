@@ -28,8 +28,11 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://daese:change-this-password@db:5432/daese_scheduler}
       SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-daese_session}
       SESSION_DAYS: ${SESSION_DAYS:-14}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://daeseaca.cafe24.com}
     ports:
       - "127.0.0.1:3001:3000"
+    volumes:
+      - ./uploads:/app/uploads
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null 2>&1 || exit 1"]
       interval: 15s
