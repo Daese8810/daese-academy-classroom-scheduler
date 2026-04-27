@@ -119,12 +119,18 @@ CREATE TABLE IF NOT EXISTS clinic_listening_book_titles (
 
 CREATE TABLE IF NOT EXISTS clinic_listening_materials (
   grade TEXT NOT NULL,
-  day_number INTEGER NOT NULL CHECK (day_number BETWEEN 1 AND 20),
+  day_number INTEGER NOT NULL CHECK (day_number BETWEEN 1 AND 60),
   answers TEXT NOT NULL DEFAULT '',
   link TEXT NOT NULL DEFAULT '',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (grade, day_number)
 );
+
+ALTER TABLE clinic_listening_materials
+  DROP CONSTRAINT IF EXISTS clinic_listening_materials_day_number_check;
+ALTER TABLE clinic_listening_materials
+  ADD CONSTRAINT clinic_listening_materials_day_number_check
+  CHECK (day_number BETWEEN 1 AND 60);
 
 CREATE INDEX IF NOT EXISTS idx_clinic_listening_materials_grade_day
   ON clinic_listening_materials (grade, day_number);

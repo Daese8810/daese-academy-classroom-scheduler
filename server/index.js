@@ -17,6 +17,7 @@ const SEOUL_TZ = 'Asia/Seoul';
 const TEAM_COMMUNICATION_PEOPLE = ['스텐', '주디', '조나단', '존', '다나', '스테이시', '관리팀'];
 const TODO_DEFAULT_ASSIGNEES = ['존', '주디', '스테이시', '다나', '조나단', '스텐'];
 const TODO_DELETE_PEOPLE = ['스텐', '존'];
+const TODO_DAILY_CLINIC_TITLE = '클리닉표 작성 및 확인';
 const TEAM_COMMUNICATION_ONLINE_MS = 90 * 1000;
 const TODO_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
 const CLINIC_LISTENING_GAS_URL = process.env.CLINIC_LISTENING_GAS_URL ||
@@ -298,6 +299,30 @@ function todoTaskPublic(row) {
   };
 }
 
+async function ensureDailyClinicTodoTask() {
+  const { rows } = await pool.query(
+    `SELECT (NOW() AT TIME ZONE 'Asia/Seoul')::date AS today,
+            EXTRACT(ISODOW FROM (NOW() AT TIME ZONE 'Asia/Seoul'))::int AS day_of_week`
+  );
+  const today = rows[0] && rows[0].today;
+  const dayOfWeek = Number(rows[0] && rows[0].day_of_week);
+  if (!today || dayOfWeek < 1 || dayOfWeek > 5) {
+    return;
+  }
+
+  await pool.query(
+    `INSERT INTO todo_tasks (title, due_date, created_by, assignees)
+     SELECT $1, $2::date, $3, $4::text[]
+      WHERE NOT EXISTS (
+        SELECT 1
+          FROM todo_tasks
+         WHERE title = $1
+           AND due_date = $2::date
+      )`,
+    [TODO_DAILY_CLINIC_TITLE, today, '자동 생성', TODO_DEFAULT_ASSIGNEES]
+  );
+}
+
 function normalizeTodoAssignees(raw) {
   const values = Array.isArray(raw)
     ? raw
@@ -359,7 +384,7 @@ function normalizeClinicListeningGrade(raw) {
 
 function normalizeClinicListeningDayNumber(raw) {
   const value = Number(String(raw || '').replace(/[^\d]/g, ''));
-  return Number.isInteger(value) && value >= 1 && value <= 20 ? value : 0;
+  return Number.isInteger(value) && value >= 1 && value <= 60 ? value : 0;
 }
 
 function normalizeClinicListeningAnswers(raw) {
@@ -426,7 +451,7 @@ async function importClinicListeningMaterialsFromGas(grade) {
     const dayNumber = normalizeClinicListeningDayNumber(item && item.day);
     const answers = normalizeClinicListeningAnswers(item && item.answers);
     const link = String((item && item.link) || '').trim();
-    if (!dayNumber || !answers || !link) continue;
+    if (!dayNumber || !answers) continue;
     await pool.query(
       `INSERT INTO clinic_listening_materials (grade, day_number, answers, link, updated_at)
        VALUES ($1, $2, $3, $4, NOW())
@@ -790,12 +815,18 @@ async function ensureClinicListeningMaterialTables() {
 
     CREATE TABLE IF NOT EXISTS clinic_listening_materials (
       grade TEXT NOT NULL,
-      day_number INTEGER NOT NULL CHECK (day_number BETWEEN 1 AND 20),
+      day_number INTEGER NOT NULL CHECK (day_number BETWEEN 1 AND 60),
       answers TEXT NOT NULL DEFAULT '',
       link TEXT NOT NULL DEFAULT '',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (grade, day_number)
     );
+
+    ALTER TABLE clinic_listening_materials
+      DROP CONSTRAINT IF EXISTS clinic_listening_materials_day_number_check;
+    ALTER TABLE clinic_listening_materials
+      ADD CONSTRAINT clinic_listening_materials_day_number_check
+      CHECK (day_number BETWEEN 1 AND 60);
 
     CREATE INDEX IF NOT EXISTS idx_clinic_listening_materials_grade_day
       ON clinic_listening_materials (grade, day_number);
@@ -980,6 +1011,8 @@ app.get('/api/team-communication/snapshot', async (req, res, next) => {
 
 app.get('/api/todos', async (req, res, next) => {
   try {
+    await ensureDailyClinicTodoTask();
+
     const { rows } = await pool.query(
       `SELECT t.id::text,
               t.title,
@@ -1363,7 +1396,7 @@ app.post('/api/clinic-listening-materials', async (req, res, next) => {
       return jsonError(res, 400, '지원하지 않는 학년/부서입니다.');
     }
     if (!dayNumber) {
-      return jsonError(res, 400, 'Day 1부터 Day 20까지만 저장할 수 있습니다.');
+      return jsonError(res, 400, 'Day 1부터 Day 60까지만 저장할 수 있습니다.');
     }
     if (!answers) {
       return jsonError(res, 400, '정답을 입력해주세요.');
@@ -1376,13 +1409,9 @@ app.post('/api/clinic-listening-materials', async (req, res, next) => {
       }
     } catch (error) {
       if (error.message === 'CLINIC_LISTENING_FILE_TOO_LARGE') {
-        return jsonError(res, 400, '듣기 파일은 30MB 이하로 업로드해주세요.');
+        return jsonError(res, 400, '듣기 파일은 50MB 이하로 업로드해주세요.');
       }
       return jsonError(res, 400, '듣기 파일 형식이 올바르지 않습니다.');
-    }
-
-    if (!link) {
-      return jsonError(res, 400, '파일을 업로드하거나 URL을 입력해주세요.');
     }
 
     const { rows } = await pool.query(
