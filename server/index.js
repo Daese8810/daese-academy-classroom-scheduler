@@ -72,7 +72,7 @@ app.use('/api/todos', (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -848,6 +848,82 @@ app.post('/api/todos', async (req, res, next) => {
     );
     res.json({ ok: true, task: todoTaskPublic(rows[0]) });
   } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/api/todos/:id', async (req, res, next) => {
+  try {
+    const taskId = String(req.params.id || '').trim();
+    const title = String(req.body.title || '').trim();
+    const dueDate = String(req.body.dueDate || '').trim();
+    const updatedBy = String(req.body.updatedBy || '').trim();
+    let attachment;
+    try {
+      attachment = normalizeTodoAttachment(req.body.attachment);
+    } catch (error) {
+      if (error.message === 'TODO_ATTACHMENT_TOO_LARGE') {
+        return jsonError(res, 400, '첨부 파일은 5MB 이하로 업로드해주세요.');
+      }
+      return jsonError(res, 400, '첨부 파일 형식이 올바르지 않습니다.');
+    }
+
+    if (!isTeamCommunicationPerson(updatedBy)) {
+      return jsonError(res, 400, '교수팀 계정으로 로그인한 뒤 업무를 수정해주세요.');
+    }
+    if (!title) {
+      return jsonError(res, 400, '업무 내용을 입력해주세요.');
+    }
+    if (!isValidDate(dueDate)) {
+      return jsonError(res, 400, '마감일을 선택해주세요.');
+    }
+
+    const updated = await pool.query(
+      `UPDATE todo_tasks
+          SET title = $2,
+              due_date = $3::date,
+              attachment_name = $4,
+              attachment_data_url = $5,
+              attachment_size = $6
+        WHERE id = $1::uuid
+          AND archived_at IS NULL`,
+      [
+        taskId,
+        title.slice(0, 300),
+        dueDate,
+        attachment.name,
+        attachment.dataUrl,
+        attachment.size,
+      ]
+    );
+    if (updated.rowCount === 0) {
+      return jsonError(res, 404, '업무를 찾을 수 없습니다.');
+    }
+
+    const { rows } = await pool.query(
+      `SELECT t.id::text,
+              t.title,
+              to_char(t.due_date, 'YYYY-MM-DD') AS due_date,
+              t.created_by,
+              t.attachment_name,
+              t.attachment_data_url,
+              t.attachment_size,
+              t.created_at,
+              COALESCE(
+                array_remove(array_agg(c.person_name ORDER BY c.completed_at), NULL),
+                ARRAY[]::text[]
+              ) AS completed_by
+         FROM todo_tasks t
+         LEFT JOIN todo_task_completions c ON c.task_id = t.id
+        WHERE t.id = $1::uuid
+        GROUP BY t.id`,
+      [taskId]
+    );
+    res.json({ ok: true, task: todoTaskPublic(rows[0]) });
+  } catch (error) {
+    if (error && error.code === '22P02') {
+      return jsonError(res, 400, '업무 ID가 올바르지 않습니다.');
+    }
     next(error);
   }
 });
