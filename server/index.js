@@ -323,6 +323,29 @@ async function ensureDailyClinicTodoTask() {
   );
 }
 
+async function archiveCompletedPastDailyClinicTodoTasks() {
+  await pool.query(
+    `UPDATE todo_tasks t
+        SET archived_at = NOW()
+      WHERE t.title = $1
+        AND t.created_by = $2
+        AND t.archived_at IS NULL
+        AND t.due_date < (NOW() AT TIME ZONE 'Asia/Seoul')::date
+        AND COALESCE(array_length(t.assignees, 1), 0) > 0
+        AND NOT EXISTS (
+          SELECT 1
+            FROM unnest(t.assignees) AS assignee(person_name)
+           WHERE NOT EXISTS (
+             SELECT 1
+               FROM todo_task_completions c
+              WHERE c.task_id = t.id
+                AND c.person_name = assignee.person_name
+           )
+        )`,
+    [TODO_DAILY_CLINIC_TITLE, '자동 생성']
+  );
+}
+
 function normalizeTodoAssignees(raw) {
   const values = Array.isArray(raw)
     ? raw
@@ -1011,6 +1034,7 @@ app.get('/api/team-communication/snapshot', async (req, res, next) => {
 
 app.get('/api/todos', async (req, res, next) => {
   try {
+    await archiveCompletedPastDailyClinicTodoTasks();
     await ensureDailyClinicTodoTask();
 
     const { rows } = await pool.query(
