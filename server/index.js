@@ -14,6 +14,7 @@ const SLOT_MINUTES = 30;
 const SEOUL_OFFSET = '+09:00';
 const SEOUL_TZ = 'Asia/Seoul';
 const TEAM_COMMUNICATION_PEOPLE = ['스텐', '주디', '조나단', '존', '다나', '스테이시', '관리팀'];
+const TODO_DELETE_PEOPLE = ['스텐', '존'];
 const TEAM_COMMUNICATION_ONLINE_MS = 90 * 1000;
 const TODO_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
 const TODO_ALLOWED_ORIGINS = new Set([
@@ -71,7 +72,7 @@ app.use('/api/todos', (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -218,6 +219,10 @@ function reservationPublic(row) {
 
 function isTeamCommunicationPerson(name) {
   return TEAM_COMMUNICATION_PEOPLE.includes(String(name || '').trim());
+}
+
+function canDeleteTodoTask(name) {
+  return TODO_DELETE_PEOPLE.includes(String(name || '').trim());
 }
 
 function teamMessagePublic(row) {
@@ -917,8 +922,8 @@ app.delete('/api/todos/:id', async (req, res, next) => {
   try {
     const taskId = String(req.params.id || '').trim();
     const person = String(req.query.person || req.body?.person || '').trim();
-    if (!isTeamCommunicationPerson(person)) {
-      return jsonError(res, 400, '교수팀 계정으로 로그인한 뒤 삭제해주세요.');
+    if (!canDeleteTodoTask(person)) {
+      return jsonError(res, 403, '업무 삭제는 스텐 또는 존 계정만 가능합니다.');
     }
 
     const result = await pool.query(
