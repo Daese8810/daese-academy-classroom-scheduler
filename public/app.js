@@ -1179,17 +1179,17 @@ case 'set-slot-minutes':
                 <label for="resNote">메모</label>
                 <textarea id="resNote" placeholder="선택사항">${escapeHtml(existing?.note || '')}</textarea>
               </div>
-              <div class="field full">
+              <div class="field full repeat-row">
                 <label class="toggle-pill repeat-toggle"><input type="checkbox" id="repeatWeekly" ${isEdit ? 'disabled' : ''} ${recurring ? 'checked' : ''}/> 매주 반복 예약</label>
-              </div>
-              <div class="field full" id="repeatCountField" style="${(isEdit || !recurring) ? 'display:none;' : ''}">
-                <label for="repeatCount">반복 횟수</label>
-                <select id="repeatCount">
+                <div class="repeat-count-field" id="repeatCountField" style="${(isEdit || !recurring) ? 'display:none;' : ''}">
+                  <label for="repeatCount">반복 횟수</label>
+                  <select id="repeatCount">
   ${[
     ...Array.from({ length: 12 }, (_, i) => i + 1),
     52
   ].map(n => `<option value="${n}" ${n === repeatCountDefault ? 'selected' : ''}>총 ${n}회</option>`).join('')}
 </select>
+                </div>
               </div>
               <div class="modal-actions full">
                 <button type="button" data-modal-close>취소</button>
