@@ -3,7 +3,6 @@
       const SLOT_START = 9 * 60;
 const SLOT_END = 22 * 60; // 오후 10시
       const DEFAULT_SLOT_MINUTES = 30;
-      const KAKAO_CROSS_RESERVATION_URL = 'https://invite.kakao.com/tc/ioWh6sUst8';
       const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
      const VIEW_MODES = {
   week: '주간 보기',
@@ -253,75 +252,6 @@ function getEndTimeOptions() {
 
       function getUser(userId) {
         return state.users.find(u => u.id === userId) || null;
-      }
-
-      function getRoomDepartment(room) {
-        if (!room) return '';
-        if (room.floor === '6층') return '영어과';
-        if (room.floor === '7층') return '국어과';
-        return '';
-      }
-
-      function isCrossDepartmentReservation(payload) {
-        const room = getRoom(payload.roomId);
-        const owner = getUser(payload.ownerId) || getCurrentUser();
-        const roomDept = getRoomDepartment(room);
-        return Boolean(roomDept && owner?.dept && roomDept !== owner.dept);
-      }
-
-      function buildCrossDepartmentReservationMessage(payload, repeatCount) {
-        const room = getRoom(payload.roomId);
-        const owner = getUser(payload.ownerId) || getCurrentUser();
-        const roomDept = getRoomDepartment(room);
-        return [
-          '[강의실 교차 예약 알림]',
-          `예약자: ${payload.ownerId} (${owner?.dept || '학과 미확인'})`,
-          `예약 강의실: ${room?.short || payload.roomId} (${roomDept || '학과 미확인'})`,
-          `날짜: ${formatDateLong(payload.date)}`,
-          `시간: ${payload.start}~${payload.end}`,
-          `용도: ${payload.title}`,
-          payload.note ? `메모: ${payload.note}` : null,
-          repeatCount > 1 ? `반복 예약: 총 ${repeatCount}건` : null
-        ].filter(Boolean).join('\n');
-      }
-
-      async function copyTextToClipboard(text) {
-        if (navigator.clipboard && window.isSecureContext) {
-          await navigator.clipboard.writeText(text);
-          return true;
-        }
-        const textarea = document.createElement('textarea');
-        textarea.value = text;
-        textarea.setAttribute('readonly', '');
-        textarea.style.position = 'fixed';
-        textarea.style.left = '-9999px';
-        textarea.style.top = '0';
-        document.body.appendChild(textarea);
-        textarea.select();
-        const copied = document.execCommand('copy');
-        textarea.remove();
-        return copied;
-      }
-
-      async function handleCrossDepartmentReservationNotice(message, kakaoWindow) {
-        if (!message) return;
-        let copied = false;
-        try {
-          copied = await copyTextToClipboard(message);
-        } catch (error) {
-          copied = false;
-        }
-        if (kakaoWindow && !kakaoWindow.closed) {
-          try {
-            kakaoWindow.opener = null;
-            kakaoWindow.location.href = KAKAO_CROSS_RESERVATION_URL;
-          } catch (error) {
-            window.open(KAKAO_CROSS_RESERVATION_URL, '_blank', 'noopener,noreferrer');
-          }
-        } else {
-          window.open(KAKAO_CROSS_RESERVATION_URL, '_blank', 'noopener,noreferrer');
-        }
-        showToast(copied ? '교차 예약 내용을 복사하고 카톡방을 열었습니다.' : '카톡방을 열었습니다. 예약 내용은 직접 복사해 주세요.', copied ? 'success' : 'error');
       }
 
       function getReservationsForRoomDate(roomId, date) {
@@ -1356,11 +1286,6 @@ case 'set-slot-minutes':
               ownerId,
               repeatCount
             };
-            const crossReservationMessage = isCrossDepartmentReservation(payload)
-              ? buildCrossDepartmentReservationMessage(payload, repeatCount)
-              : '';
-            const pendingKakaoWindow = crossReservationMessage ? window.open('about:blank', '_blank') : null;
-
             try {
               if (isEdit) {
                 await api(`/api/reservations/${encodeURIComponent(existing.id)}`, {
@@ -1378,11 +1303,7 @@ case 'set-slot-minutes':
               await refreshAllData();
               closeModal();
               render();
-              await handleCrossDepartmentReservationNotice(crossReservationMessage, pendingKakaoWindow);
             } catch (error) {
-              if (pendingKakaoWindow && !pendingKakaoWindow.closed) {
-                pendingKakaoWindow.close();
-              }
               const conflict = error.data?.conflict;
               if (conflict) {
                 showToast(`중복 예약이 있어 저장할 수 없습니다. ${conflict.date} ${conflict.start}~${conflict.end} / ${conflict.room} / ${conflict.title}`, 'error');
