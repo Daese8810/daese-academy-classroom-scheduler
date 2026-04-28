@@ -20,6 +20,48 @@ const TODO_DELETE_PEOPLE = ['스텐', '존'];
 const TODO_DAILY_AUTO_TITLES = ['클리닉표 작성 및 확인', '반별 과제 안내'];
 const TEAM_COMMUNICATION_ONLINE_MS = 90 * 1000;
 const TODO_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+const KAKAOWORK_APP_KEY = process.env.KAKAOWORK_APP_KEY || '';
+const KAKAOWORK_KOREAN_ROOM_MANAGER_EMAIL =
+  process.env.KAKAOWORK_KOREAN_ROOM_MANAGER_EMAIL || 'sasin0815@naver.com';
+const KAKAOWORK_CLASSROOM_NOTICE_CONVERSATION_ID =
+  process.env.KAKAOWORK_CLASSROOM_NOTICE_CONVERSATION_ID || '';
+const KAKAOWORK_MESSAGES_SEND_BY_EMAIL_URL =
+  'https://api.kakaowork.com/v1/messages.send_by_email';
+const KAKAOWORK_MESSAGES_SEND_URL =
+  'https://api.kakaowork.com/v1/messages.send';
+const ENGLISH_TEACHERS = new Set([
+  '스텐',
+  '주디',
+  '조나단',
+  '존',
+  '다나',
+  '스테이시',
+]);
+const KOREAN_TEACHERS = new Set([
+  '국신',
+  '국대',
+  '국호',
+  '국화',
+  '국짱',
+  '국보',
+]);
+const KOREAN_ROOM_CODES = new Set([
+  '6-5',
+  '6-6',
+  '6-7',
+  '6-seminar',
+  '7-3',
+  '7-4',
+]);
+const ENGLISH_ROOM_CODES = new Set([
+  '6-1',
+  '6-2',
+  '6-3',
+  '6-4',
+  '7-1',
+  '7-2',
+  '7-5',
+]);
 const CLINIC_LISTENING_GAS_URL = process.env.CLINIC_LISTENING_GAS_URL ||
   'https://script.google.com/macros/s/AKfycbyTm_Plkg1I9GA1tTBbJWiYaFJI2Tuachrbwo_ZpGLQD4JpskyNe0H2KhEG688qMIPLHw/exec';
 const CLINIC_LISTENING_GRADES = ['초등부', '중1', '중2', '중3', '고1', '고2', '초등부 Starter'];
@@ -422,6 +464,146 @@ function publicBaseUrl(req) {
     return `${proto || 'https'}://${host}`;
   }
   return 'https://daeseaca.cafe24.com';
+}
+
+function crossDepartmentReservationDirection({ owner, room, category }) {
+  if (!owner || !room) return false;
+  if (category === 'blocked') return false;
+  if (ENGLISH_TEACHERS.has(owner.login_id) && KOREAN_ROOM_CODES.has(room.code)) {
+    return '영어과 선생님이 국어과 강의실을 예약했습니다.';
+  }
+  if (KOREAN_TEACHERS.has(owner.login_id) && ENGLISH_ROOM_CODES.has(room.code)) {
+    return '국어과 선생님이 영어과 강의실을 예약했습니다.';
+  }
+  return '';
+}
+
+function reservationDateSummary(payloads, fallbackDate) {
+  const dates = Array.isArray(payloads) ? payloads.map((item) => item.date).filter(Boolean) : [];
+  if (dates.length <= 1) return dates[0] || fallbackDate;
+  return `${dates[0]} ~ ${dates[dates.length - 1]} (${dates.length}회 반복)`;
+}
+
+function classroomAppUrl() {
+  return String(process.env.PUBLIC_BASE_URL || APP_URL || 'https://daeseaca.cafe24.com').replace(/\/+$/, '');
+}
+
+function buildCrossDepartmentReservationNoticeText({ owner, room, date, start, end, title, note, payloads, direction }) {
+  const ownerName = owner.display_name || owner.login_id;
+  const lines = [
+    '[강의실 교차 예약 알림]',
+    '',
+    direction,
+    '',
+    `예약자: ${ownerName} (${owner.department || '소속 미확인'})`,
+    `강의실: ${room.name || room.short_name || room.code}`,
+    `날짜: ${reservationDateSummary(payloads, date)}`,
+    `시간: ${start} ~ ${end}`,
+    `용도: ${title}`,
+  ];
+
+  if (note) lines.push(`메모: ${note}`);
+
+  const appUrl = classroomAppUrl();
+  if (appUrl) lines.push('', `예약 보드: ${appUrl}`);
+
+  return lines.join('\n');
+}
+
+async function sendKakaoWorkMessageToConversation({ conversationId, text }) {
+  if (!KAKAOWORK_APP_KEY) {
+    console.warn('[kakaowork] skipped: KAKAOWORK_APP_KEY is not configured');
+    return;
+  }
+  if (!conversationId) {
+    console.warn('[kakaowork] skipped: classroom notice conversation id is not configured');
+    return;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 7000);
+
+  try {
+    const response = await fetch(KAKAOWORK_MESSAGES_SEND_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${KAKAOWORK_APP_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ conversation_id: conversationId, text }),
+      signal: controller.signal,
+    });
+
+    const responseText = await response.text();
+    let decoded = null;
+    try {
+      decoded = responseText ? JSON.parse(responseText) : null;
+    } catch (_) {}
+
+    if (!response.ok || (decoded && decoded.success === false)) {
+      throw new Error(`status=${response.status} body=${responseText.slice(0, 300)}`);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function sendKakaoWorkMessageByEmail({ email, text }) {
+  if (!KAKAOWORK_APP_KEY) {
+    console.warn('[kakaowork] skipped: KAKAOWORK_APP_KEY is not configured');
+    return;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 7000);
+
+  try {
+    const response = await fetch(KAKAOWORK_MESSAGES_SEND_BY_EMAIL_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${KAKAOWORK_APP_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, text }),
+      signal: controller.signal,
+    });
+
+    const responseText = await response.text();
+    let decoded = null;
+    try {
+      decoded = responseText ? JSON.parse(responseText) : null;
+    } catch (_) {}
+
+    if (!response.ok || (decoded && decoded.success === false)) {
+      throw new Error(`status=${response.status} body=${responseText.slice(0, 300)}`);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function queueCrossDepartmentReservationNotice(payload) {
+  const direction = crossDepartmentReservationDirection(payload);
+  if (!direction) return;
+
+  const text = buildCrossDepartmentReservationNoticeText({ ...payload, direction });
+  const sendPromise = KAKAOWORK_CLASSROOM_NOTICE_CONVERSATION_ID
+    ? sendKakaoWorkMessageToConversation({
+        conversationId: KAKAOWORK_CLASSROOM_NOTICE_CONVERSATION_ID,
+        text,
+      })
+    : sendKakaoWorkMessageByEmail({
+        email: KAKAOWORK_KOREAN_ROOM_MANAGER_EMAIL,
+        text,
+      });
+
+  sendPromise
+    .then(() => {
+      console.log('[kakaowork] cross department reservation notice sent');
+    })
+    .catch((error) => {
+      console.warn('[kakaowork] cross department reservation notice failed: ' + error.message);
+    });
 }
 
 function normalizeClinicListeningGrade(raw) {
@@ -1843,6 +2025,17 @@ app.post('/api/reservations', requireAuth, async (req, res, next) => {
       inserted.push(rows[0].id);
     }
     await client.query('COMMIT');
+    queueCrossDepartmentReservationNotice({
+      owner,
+      room,
+      category,
+      date,
+      start,
+      end,
+      title,
+      note,
+      payloads,
+    });
     res.json({ ok: true, insertedCount: inserted.length, ids: inserted });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
