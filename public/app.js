@@ -1126,8 +1126,7 @@ case 'set-slot-minutes':
 
         openModal(`
           <div class="modal">
-            <h2>${isEdit ? '예약 수정' : '새 예약 만들기'}</h2>
-            <p class="sub">빈 시간은 바로 예약할 수 있고, 반복 예약은 매주 같은 시간대로 한 번에 넣을 수 있습니다. 현재 예약 단위는 ${getSlotMinutes()}분입니다.</p>
+            <h2>${isEdit ? '예약 수정' : '강의실 예약'}</h2>
             <form id="reservationForm" class="modal-grid">
               <div class="field">
                 <label for="resDate">날짜</label>
@@ -1174,15 +1173,14 @@ case 'set-slot-minutes':
               `}
               <div class="field full">
                 <label for="resTitle">용도</label>
-                <input id="resTitle" type="text" value="${escapeHtml(existing?.title || '')}" placeholder="예: 직보, 클리닉, 회의, 상담" required />
+                <input id="resTitle" type="text" value="${escapeHtml(existing?.title || '')}" placeholder="예 : 수업, 직보, 클리닉, 기타" required />
               </div>
               <div class="field full">
                 <label for="resNote">메모</label>
-                <textarea id="resNote" placeholder="수업 목적, 학년, 준비물, 비고 등을 적어두면 편합니다.">${escapeHtml(existing?.note || '')}</textarea>
+                <textarea id="resNote" placeholder="선택사항">${escapeHtml(existing?.note || '')}</textarea>
               </div>
               <div class="field full">
-                <label class="toggle-pill" style="width: fit-content;"><input type="checkbox" id="repeatWeekly" ${isEdit ? 'disabled' : ''} ${recurring ? 'checked' : ''}/> 매주 반복 예약</label>
-                <div class="help">체크하면 같은 요일·같은 시간으로 다음 주들까지 한 번에 생성합니다. 관리자 차단도 반복 생성할 수 있습니다.${isEdit ? ' 수정 화면에서는 개별 일정만 변경됩니다.' : ''}</div>
+                <label class="toggle-pill repeat-toggle"><input type="checkbox" id="repeatWeekly" ${isEdit ? 'disabled' : ''} ${recurring ? 'checked' : ''}/> 매주 반복 예약</label>
               </div>
               <div class="field full" id="repeatCountField" style="${(isEdit || !recurring) ? 'display:none;' : ''}">
                 <label for="repeatCount">반복 횟수</label>
