@@ -1351,6 +1351,21 @@ case 'set-slot-minutes':
         if (e.target === modalBackdrop) closeModal();
       }
 
+      function closeQuickPanelDropdowns() {
+        appView.querySelectorAll('.quick-panel-dropdown[open]').forEach(dropdown => {
+          dropdown.removeAttribute('open');
+        });
+      }
+
+      function handleOutsideQuickPanelClick(e) {
+        if (e.target.closest?.('.quick-panel-dropdown')) return;
+        closeQuickPanelDropdowns();
+      }
+
+      function handleEscapeKey(e) {
+        if (e.key === 'Escape') closeQuickPanelDropdowns();
+      }
+
       function showToast(message, type = '') {
         const toast = document.createElement('div');
         toast.className = `toast ${type}`.trim();
@@ -1382,6 +1397,8 @@ case 'set-slot-minutes':
         const user = getCurrentUser();
         if (user) renderApp();
       });
+      document.addEventListener('pointerdown', handleOutsideQuickPanelClick);
+      document.addEventListener('keydown', handleEscapeKey);
 
       (async () => {
         try {
