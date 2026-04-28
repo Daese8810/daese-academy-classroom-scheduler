@@ -135,6 +135,12 @@ ALTER TABLE clinic_listening_materials
 CREATE INDEX IF NOT EXISTS idx_clinic_listening_materials_grade_day
   ON clinic_listening_materials (grade, day_number);
 
+CREATE TABLE IF NOT EXISTS dashboard_storage (
+  storage_key TEXT PRIMARY KEY,
+  json_text TEXT NOT NULL DEFAULT '{}',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 DO $$
 BEGIN
   IF NOT EXISTS (

@@ -38,6 +38,7 @@ const DASHBOARD_ALLOWED_ORIGINS = new Set([
   'http://localhost',
   'http://127.0.0.1',
 ]);
+const DASHBOARD_STORAGE_KEYS = new Set(['teacher-preferences', 'exam-scores']);
 
 if (!DATABASE_URL) {
   console.error('DATABASE_URL 환경 변수가 필요합니다.');
@@ -100,6 +101,19 @@ app.use('/api/clinic-listening-materials', (req, res, next) => {
   next();
 });
 app.use('/api/clinic-listening-materials', express.json({ limit: '80mb' }));
+app.use('/api/dashboard-storage', (req, res, next) => {
+  const origin = String(req.headers.origin || '');
+  const originRoot = origin.replace(/:\d+$/, '');
+  if (TODO_ALLOWED_ORIGINS.has(origin) || TODO_ALLOWED_ORIGINS.has(originRoot)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,PUT,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+app.use('/api/dashboard-storage', express.json({ limit: '20mb' }));
 app.use('/uploads', express.static(UPLOAD_ROOT, {
   etag: true,
   maxAge: '7d',
@@ -253,6 +267,10 @@ function isTeamCommunicationPerson(name) {
 
 function canDeleteTodoTask(name) {
   return TODO_DELETE_PEOPLE.includes(String(name || '').trim());
+}
+
+function isValidDashboardStorageKey(key) {
+  return DASHBOARD_STORAGE_KEYS.has(String(key || '').trim());
 }
 
 function teamMessagePublic(row) {
@@ -858,6 +876,16 @@ async function ensureClinicListeningMaterialTables() {
   `);
 }
 
+async function ensureDashboardStorageTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dashboard_storage (
+      storage_key TEXT PRIMARY KEY,
+      json_text TEXT NOT NULL DEFAULT '{}',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+}
+
 async function authMiddleware(req, res, next) {
   try {
     const cookies = parseCookies(req.headers.cookie || '');
@@ -1301,6 +1329,64 @@ app.delete('/api/todos/:id', async (req, res, next) => {
     if (error && error.code === '22P02') {
       return jsonError(res, 400, '업무 ID가 올바르지 않습니다.');
     }
+    next(error);
+  }
+});
+
+app.get('/api/dashboard-storage/:key', async (req, res, next) => {
+  try {
+    const key = String(req.params.key || '').trim();
+    if (!isValidDashboardStorageKey(key)) {
+      return jsonError(res, 400, '지원하지 않는 저장소 키입니다.');
+    }
+
+    const { rows } = await pool.query(
+      `SELECT storage_key, json_text, updated_at
+         FROM dashboard_storage
+        WHERE storage_key = $1`,
+      [key]
+    );
+    const row = rows[0];
+    res.json({
+      ok: true,
+      key,
+      json: row ? row.json_text : '{}',
+      updatedAt: row ? row.updated_at : null,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/api/dashboard-storage/:key', async (req, res, next) => {
+  try {
+    const key = String(req.params.key || '').trim();
+    if (!isValidDashboardStorageKey(key)) {
+      return jsonError(res, 400, '지원하지 않는 저장소 키입니다.');
+    }
+
+    const jsonText = String(req.body?.json ?? '').trim() || '{}';
+    try {
+      JSON.parse(jsonText);
+    } catch (_) {
+      return jsonError(res, 400, '저장할 JSON 형식이 올바르지 않습니다.');
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO dashboard_storage (storage_key, json_text, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (storage_key)
+       DO UPDATE SET json_text = EXCLUDED.json_text,
+                     updated_at = NOW()
+       RETURNING storage_key, updated_at`,
+      [key, jsonText]
+    );
+    res.json({
+      ok: true,
+      key,
+      updatedAt: rows[0]?.updated_at || null,
+    });
+  } catch (error) {
     next(error);
   }
 });
@@ -1893,6 +1979,7 @@ async function start() {
   await ensureTeamCommunicationTables();
   await ensureTodoTables();
   await ensureClinicListeningMaterialTables();
+  await ensureDashboardStorageTables();
   app.listen(PORT, () => {
     console.log(`대세학원 강의실 예약 서버가 포트 ${PORT}에서 실행 중입니다.`);
   });
