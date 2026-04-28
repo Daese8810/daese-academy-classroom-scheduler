@@ -829,15 +829,21 @@ button.primary:hover {
       min-width: 112px;
       max-width: 112px;
       width: 112px;
-      text-align: left;
+      text-align: center;
       background: linear-gradient(180deg, #ffffff, #fbfdff);
       padding: 0 14px;
       border-right: 1px solid var(--line);
     }
 
+    .schedule-table thead th.first-col {
+      font-size: 16px;
+      font-weight: 900;
+    }
+
     .schedule-table tbody th {
       height: var(--schedule-row-height, 54px);
-      font-size: 14px;
+      font-size: 16px;
+      font-weight: 900;
       line-height: 1.4;
       border-bottom: 1px solid var(--line);
       z-index: 3;
@@ -929,7 +935,7 @@ button.primary:hover {
     }
 
     .board-wrap.compact-rows .schedule-table tbody th {
-      font-size: 13px;
+      font-size: 14px;
     }
 
     .board-wrap.compact-rows .res-box {
