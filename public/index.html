@@ -474,50 +474,6 @@ button.primary:hover {
       justify-content: flex-start;
     }
 
-    .toolbar-summary-strip {
-      flex: 1 1 520px;
-      min-width: 420px;
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-    }
-
-    .toolbar-summary-item {
-      min-width: 0;
-      padding: 8px 10px;
-      border: 1px solid #cfe0ff;
-      border-radius: 14px;
-      background: rgba(255, 255, 255, 0.78);
-      display: grid;
-      grid-template-columns: auto auto 1fr;
-      align-items: baseline;
-      gap: 8px;
-      color: #0f2a55;
-    }
-
-    .toolbar-summary-item span {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 800;
-      white-space: nowrap;
-    }
-
-    .toolbar-summary-item strong {
-      font-size: 18px;
-      line-height: 1;
-      white-space: nowrap;
-    }
-
-    .toolbar-summary-item small {
-      min-width: 0;
-      color: #344054;
-      font-size: 12px;
-      font-weight: 700;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
     .toolbar-row select,
     .toolbar-row input[type="date"] {
       border-radius: 12px;
@@ -568,28 +524,6 @@ button.primary:hover {
     }
 
     .toggle-pill input { accent-color: var(--primary); }
-
-    .legend {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-      font-size: 13px;
-      color: var(--muted);
-    }
-
-    .legend-item {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .legend-swatch {
-      width: 14px;
-      height: 14px;
-      border-radius: 4px;
-      border: 1px solid rgba(0,0,0,0.08);
-      display: inline-block;
-    }
 
     .summary-grid {
       display: grid;
@@ -1207,16 +1141,10 @@ button.primary:hover {
     }
 
     @media (max-width: 1280px) {
-      .toolbar-summary-strip {
-        flex-basis: 100%;
-        min-width: 0;
-        grid-template-columns: 1fr;
-      }
       .toolbar-inline-controls {
         flex-basis: 100%;
         justify-content: flex-start;
       }
-      .toolbar-summary-item { grid-template-columns: auto auto minmax(0, 1fr); }
       .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .main-grid { grid-template-columns: 1fr; }
       .side-stack { position: static; }
@@ -1228,8 +1156,6 @@ button.primary:hover {
       .login-left, .login-right { padding: 28px; }
       .account-list { grid-template-columns: 1fr; }
       .summary-grid { grid-template-columns: 1fr; }
-      .toolbar-summary-item { grid-template-columns: 1fr auto; }
-      .toolbar-summary-item small { grid-column: 1 / -1; }
       .app-header-inner { align-items: flex-start; }
       .quick-panel-grid { grid-template-columns: 1fr; }
       .modal-grid, .detail-grid { grid-template-columns: 1fr; }
