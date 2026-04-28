@@ -832,9 +832,10 @@ button.primary:hover {
       max-width: 112px;
       width: 112px;
       text-align: center;
-      background: linear-gradient(180deg, #ffffff, #fbfdff);
+      background: linear-gradient(180deg, #eef6ff 0%, #e7f0ff 100%);
       padding: 0 14px;
       border-right: 1px solid var(--line);
+      box-shadow: inset -3px 0 0 rgba(37, 99, 235, 0.10);
     }
 
     .schedule-table thead th.first-col {
@@ -850,6 +851,19 @@ button.primary:hover {
       border-bottom: 1px solid var(--line);
       z-index: 3;
       vertical-align: middle;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
+    .schedule-table tbody th.seminar-room {
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+
+    .schedule-table tbody tr:hover > th {
+      background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+      color: #123b8a;
+      box-shadow: inset -4px 0 0 #2563eb;
     }
 
     .room-sub {
@@ -949,6 +963,10 @@ button.primary:hover {
 
     .board-wrap.compact-rows .schedule-table tbody th {
       font-size: 14px;
+    }
+
+    .board-wrap.compact-rows .schedule-table tbody th.seminar-room {
+      font-size: 12px;
     }
 
     .board-wrap.compact-rows .res-box {

@@ -656,7 +656,8 @@ function renderWeekBoard(user) {
       }
 
       function renderWeekRoomRow(room, dates, user, now) {
-        let html = `<tr><th>${escapeHtml(room.short)}<span class="room-sub">${escapeHtml(room.floor)} · ${room.type === 'seminar' ? '세미나실' : '일반 강의실'}</span></th>`;
+        const roomCellClass = `room-name-cell ${room.type === 'seminar' ? 'seminar-room' : ''}`;
+        let html = `<tr><th class="${roomCellClass}" data-room-id="${escapeHtml(room.id)}">${escapeHtml(room.short)}<span class="room-sub">${escapeHtml(room.floor)} · ${room.type === 'seminar' ? '세미나실' : '일반 강의실'}</span></th>`;
         dates.forEach((date, dateIndex) => {
           const slots = getVisibleSlotsForDate(date);
           if (!slots.length) return;
@@ -707,7 +708,8 @@ function renderWeekBoard(user) {
         `;
         const rows = visibleRooms.map(room => {
           const reservations = getReservationsForRoomDate(room.id, date);
-          let row = `<tr><th>${escapeHtml(room.short)}<span class="room-sub">${escapeHtml(room.floor)} · ${room.type === 'seminar' ? '세미나실' : '일반 강의실'}</span></th>`;
+          const roomCellClass = `room-name-cell ${room.type === 'seminar' ? 'seminar-room' : ''}`;
+          let row = `<tr><th class="${roomCellClass}" data-room-id="${escapeHtml(room.id)}">${escapeHtml(room.short)}<span class="room-sub">${escapeHtml(room.floor)} · ${room.type === 'seminar' ? '세미나실' : '일반 강의실'}</span></th>`;
           let i = 0;
           while (i < slots.length) {
             const slot = slots[i];
