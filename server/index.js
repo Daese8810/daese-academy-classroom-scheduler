@@ -65,7 +65,12 @@ app.use((req, res, next) => {
 app.use('/api/team-communication', (req, res, next) => {
   const origin = String(req.headers.origin || '');
   const originRoot = origin.replace(/:\d+$/, '');
-  if (DASHBOARD_ALLOWED_ORIGINS.has(origin) || DASHBOARD_ALLOWED_ORIGINS.has(originRoot)) {
+  if (
+    TODO_ALLOWED_ORIGINS.has(origin) ||
+    TODO_ALLOWED_ORIGINS.has(originRoot) ||
+    DASHBOARD_ALLOWED_ORIGINS.has(origin) ||
+    DASHBOARD_ALLOWED_ORIGINS.has(originRoot)
+  ) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
@@ -1649,6 +1654,20 @@ app.post('/api/team-communication/messages/read', async (req, res, next) => {
       [person]
     );
     res.json({ ok: true, updatedCount: result.rowCount });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/team-communication/access-logs/clear', async (req, res, next) => {
+  try {
+    const person = String(req.body.person || '').trim();
+    if (person !== '스텐') {
+      return jsonError(res, 403, '접속 로그는 스텐만 삭제할 수 있습니다.');
+    }
+
+    const result = await pool.query('DELETE FROM team_access_logs');
+    res.json({ ok: true, deletedCount: result.rowCount });
   } catch (error) {
     next(error);
   }
