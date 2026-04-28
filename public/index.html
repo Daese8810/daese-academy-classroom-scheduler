@@ -932,6 +932,23 @@ button.primary:hover {
       background: linear-gradient(180deg, #ffffff, #fbfdff);
     }
 
+    .list-item[data-action] {
+      cursor: pointer;
+      transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
+    }
+
+    .list-item[data-action]:hover {
+      transform: translateY(-2px);
+      border-color: #8fb4ee;
+      background: linear-gradient(180deg, #f8fbff, #eff6ff);
+      box-shadow: 0 10px 20px rgba(37, 99, 235, 0.14);
+    }
+
+    .list-item[data-action]:active {
+      transform: translateY(0);
+      box-shadow: 0 5px 12px rgba(37, 99, 235, 0.12);
+    }
+
     .list-item strong {
       display: block;
       margin-bottom: 4px;

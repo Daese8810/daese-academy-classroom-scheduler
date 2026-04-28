@@ -505,7 +505,6 @@ const boardTitle = state.ui.viewMode === 'week'
                   <div class="quick-panel-dropdown-panel quick-panel-dropdown-panel-narrow">
                     <section class="quick-panel-section">
                       <h3>내 예약</h3>
-                      <p class="sub">수정·취소가 필요한 일정을 바로 확인합니다.</p>
                       <div class="list">
                         ${myUpcoming.length ? myUpcoming.map(r => renderSideReservationItem(r)).join('') : '<div class="empty-state">현재 예정된 내 예약이 없습니다.</div>'}
                       </div>
