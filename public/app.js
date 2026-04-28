@@ -717,7 +717,7 @@ function renderWeekBoard(user) {
   const slotMinutes = getSlotMinutes();
   const isNow = date === now.date && timeToMinutes(slot) <= now.actualMinutes && now.actualMinutes < timeToMinutes(slot) + slotMinutes;
   const past = date < now.date || (date === now.date && timeToMinutes(slot) + slotMinutes <= now.actualMinutes);
-  html += `<td class="empty-slot ${cellClass} ${isNow ? 'now-marker' : ''} ${past ? 'past-slot' : ''}" data-action="new-reservation-cell" data-room-id="${escapeHtml(room.id)}" data-date="${escapeHtml(date)}" data-start="${escapeHtml(slot)}"></td>`;
+  html += `<td class="empty-slot ${cellClass} ${isNow ? 'now-marker' : ''} ${past ? 'past-slot' : ''}" data-action="new-reservation-cell" data-room-id="${escapeHtml(room.id)}" data-date="${escapeHtml(date)}" data-start="${escapeHtml(slot)}" title="${escapeHtml(`${room.short} ${formatDateLabel(date)} ${slot} 예약`)}"></td>`;
   i += 1;
 }
           }
@@ -762,7 +762,7 @@ function renderWeekBoard(user) {
               const slotMinutes = getSlotMinutes();
 const isNow = date === now.date && timeToMinutes(slot) <= now.actualMinutes && now.actualMinutes < timeToMinutes(slot) + slotMinutes;
 const past = date < now.date || (date === now.date && timeToMinutes(slot) + slotMinutes <= now.actualMinutes);
-              row += `<td class="empty-slot ${isNow ? 'now-marker' : ''} ${past ? 'past-slot' : ''}" data-action="new-reservation-cell" data-room-id="${escapeHtml(room.id)}" data-date="${escapeHtml(date)}" data-start="${escapeHtml(slot)}"></td>`;
+              row += `<td class="empty-slot ${isNow ? 'now-marker' : ''} ${past ? 'past-slot' : ''}" data-action="new-reservation-cell" data-room-id="${escapeHtml(room.id)}" data-date="${escapeHtml(date)}" data-start="${escapeHtml(slot)}" title="${escapeHtml(`${room.short} ${formatDateLabel(date)} ${slot} 예약`)}"></td>`;
               i += 1;
             }
           }
