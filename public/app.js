@@ -498,7 +498,6 @@ const boardTitle = state.ui.viewMode === 'week'
                 </div>
               </div>
               <div class="user-toolbar">
-                <span class="badge ${user.role === 'admin' ? 'admin' : ''}">${escapeHtml(user.id)}</span>
                 <span class="badge">${escapeHtml(formatHeaderDate(now.date))}</span>
                 <details class="quick-panel-dropdown">
                   <summary class="quick-panel-summary">내 예약 <span class="summary-chevron">▾</span></summary>
@@ -511,7 +510,13 @@ const boardTitle = state.ui.viewMode === 'week'
                     </section>
                   </div>
                 </details>
-                <button class="ghost" data-action="change-password">비밀번호 변경</button>
+                <button class="icon-button" data-action="change-password" aria-label="비밀번호 변경" title="비밀번호 변경">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="7.5" cy="15.5" r="3.5"></circle>
+                    <path d="M10 13l8-8"></path>
+                    <path d="M15 5h4v4"></path>
+                  </svg>
+                </button>
                 <button class="icon-button" data-action="logout" aria-label="로그아웃" title="로그아웃">
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M10 17l5-5-5-5"></path>
@@ -527,7 +532,7 @@ const boardTitle = state.ui.viewMode === 'week'
             ${user.mustChangePassword ? `
               <section class="card" style="border:1px solid #f3c4c4;background:#fff7f7;padding:16px 18px;">
                 <strong style="display:block;margin-bottom:6px;">초기 비밀번호를 사용 중입니다.</strong>
-                <span class="help">상단의 ‘비밀번호 변경’ 버튼으로 안전한 비밀번호로 바꿔 주세요.</span>
+                <span class="help">상단의 비밀번호 변경 아이콘으로 안전한 비밀번호로 바꿔 주세요.</span>
               </section>
               <div class="layout-gap"></div>
             ` : ''}
