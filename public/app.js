@@ -949,6 +949,7 @@ const past = date < now.date || (date === now.date && timeToMinutes(slot) + slot
           case 'go-today':
             state.ui.selectedDate = formatDate(new Date());
             state.ui.mobileSelectedDate = state.ui.selectedDate;
+            state.ui.viewMode = 'day';
             saveUiState();
             try {
               await refreshBoardData();
