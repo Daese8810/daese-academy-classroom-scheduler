@@ -182,6 +182,11 @@ const ROOM_CAPACITY = [
         return `${date.getMonth() + 1}월 ${date.getDate()}일 (${DAY_NAMES[date.getDay()]})`;
       }
 
+      function formatHeaderDate(dateStr) {
+        const date = parseDate(dateStr);
+        return `${String(date.getFullYear()).slice(-2)}/${date.getMonth() + 1}/${date.getDate()}/${DAY_NAMES[date.getDay()]}`;
+      }
+
       function formatDateLong(dateStr) {
         const date = parseDate(dateStr);
         return `${date.getFullYear()}년 ${date.getMonth() + 1}월 ${date.getDate()}일 (${DAY_NAMES[date.getDay()]})`;
@@ -451,7 +456,6 @@ function getWeekendTitle(dateStr) {
         if (!user) return;
         const now = getNowInfo();
 const selectedDate = state.ui.selectedDate;
-const availableNow = getAvailableRoomsNow(isToday(selectedDate) ? selectedDate : now.date);
 const myUpcoming = getUpcomingMine(user);
 const mobileMode = state.ui.forceMobile || window.innerWidth < 900;
 
@@ -490,13 +494,13 @@ const boardTitle = state.ui.viewMode === 'week'
                 </div>
               </div>
               <div class="user-toolbar">
-                <span class="badge ${user.role === 'admin' ? 'admin' : ''}">${escapeHtml(user.id)} · ${escapeHtml(user.dept)}${user.role === 'admin' ? ' · 관리자' : ''}</span>
-                <span class="badge">현재 시각 ${escapeHtml(now.date)} ${escapeHtml(minutesToTime(Math.floor(now.actualMinutes / 60) * 60 + (now.actualMinutes % 60 >= 30 ? 30 : 0)))}</span>
+                <span class="badge ${user.role === 'admin' ? 'admin' : ''}">${escapeHtml(user.id)}</span>
+                <span class="badge">${escapeHtml(formatHeaderDate(now.date))}</span>
                 <details class="quick-panel-dropdown">
-                  <summary class="quick-panel-summary">내 예약 바로보기 <span class="summary-chevron">▾</span></summary>
+                  <summary class="quick-panel-summary">내 예약 <span class="summary-chevron">▾</span></summary>
                   <div class="quick-panel-dropdown-panel quick-panel-dropdown-panel-narrow">
                     <section class="quick-panel-section">
-                      <h3>내 예약 바로보기</h3>
+                      <h3>내 예약</h3>
                       <p class="sub">수정·취소가 필요한 일정을 바로 확인합니다.</p>
                       <div class="list">
                         ${myUpcoming.length ? myUpcoming.map(r => renderSideReservationItem(r)).join('') : '<div class="empty-state">현재 예정된 내 예약이 없습니다.</div>'}
@@ -504,25 +508,14 @@ const boardTitle = state.ui.viewMode === 'week'
                     </section>
                   </div>
                 </details>
-                <details class="quick-panel-dropdown">
-                  <summary class="quick-panel-summary">지금 비어있는 강의실 <span class="summary-chevron">▾</span></summary>
-                  <div class="quick-panel-dropdown-panel quick-panel-dropdown-panel-narrow">
-                    <section class="quick-panel-section">
-                      <h3>지금 비어있는 강의실</h3>
-                      <p class="sub">현재 시각 기준으로 바로 선점 가능한 강의실입니다.</p>
-                      <div class="list">
-                        ${availableNow.length ? availableNow.slice(0, 10).map(room => `
-                          <div class="list-item">
-                            <strong>${escapeHtml(room.name)}</strong>
-                            <small>${escapeHtml(room.floor)} · ${room.type === 'seminar' ? '세미나실' : '일반 강의실'}</small>
-                          </div>
-                        `).join('') : '<div class="empty-state">현재 비어 있는 강의실이 없습니다.</div>'}
-                      </div>
-                    </section>
-                  </div>
-                </details>
                 <button class="ghost" data-action="change-password">비밀번호 변경</button>
-                <button class="ghost" data-action="logout">로그아웃</button>
+                <button class="icon-button" data-action="logout" aria-label="로그아웃" title="로그아웃">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M10 17l5-5-5-5"></path>
+                    <path d="M15 12H3"></path>
+                    <path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"></path>
+                  </svg>
+                </button>
               </div>
             </div>
           </header>

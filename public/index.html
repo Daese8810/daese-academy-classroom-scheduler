@@ -95,6 +95,29 @@ button.primary:hover {
       color: #0f7a4f;
     }
 
+    button.icon-button {
+      width: 40px;
+      height: 40px;
+      min-height: 40px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 14px;
+      background: linear-gradient(180deg, #ffffff 0%, #eef5ff 100%);
+      border-color: #b9cff5;
+    }
+
+    button.icon-button svg {
+      width: 22px;
+      height: 22px;
+      fill: none;
+      stroke: #1d4ed8;
+      stroke-width: 2.4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
     .hidden { display: none !important; }
 
     .screen {
@@ -348,8 +371,10 @@ button.primary:hover {
     }
 
     .quick-panel-summary {
-      width: 172px;
+      width: auto;
+      min-width: 96px;
       min-height: 40px;
+      padding: 0 14px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
