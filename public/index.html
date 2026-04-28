@@ -243,9 +243,10 @@ button.primary:hover {
       max-width: none;
       width: 100%;
       margin: 0 auto;
-      padding: 18px 18px 28px;
+      padding: 10px 10px 16px;
       display: flex;
       flex-direction: column;
+      overflow-x: hidden;
     }
 
     .app-header {
@@ -255,8 +256,8 @@ button.primary:hover {
       background: linear-gradient(135deg, rgba(29,78,216,0.98), rgba(37,99,235,0.94));
       backdrop-filter: blur(10px);
       border-bottom: 1px solid rgba(255,255,255,0.24);
-      margin: -18px -18px 0;
-      padding: 14px 18px;
+      margin: -10px -10px 0;
+      padding: 10px 12px;
       box-shadow: 0 12px 30px rgba(37, 99, 235, 0.2);
     }
 
@@ -266,7 +267,7 @@ button.primary:hover {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
+      gap: 10px;
     }
 
     .brand {
@@ -277,11 +278,11 @@ button.primary:hover {
     }
 
     .brand-mark {
-      width: 52px;
-      height: 52px;
-      flex: 0 0 52px;
+      width: 46px;
+      height: 46px;
+      flex: 0 0 46px;
       object-fit: contain;
-      padding: 8px;
+      padding: 7px;
       border-radius: 50%;
       background: #ffffff;
       box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
@@ -293,7 +294,7 @@ button.primary:hover {
 
     .brand h1 {
       margin: 0;
-      font-size: 24px;
+      font-size: 23px;
       color: white;
     }
 
@@ -307,7 +308,7 @@ button.primary:hover {
     .user-toolbar {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
       justify-content: flex-end;
     }
@@ -317,7 +318,7 @@ button.primary:hover {
       align-items: center;
       gap: 6px;
       border-radius: 999px;
-      padding: 8px 12px;
+      padding: 7px 10px;
       font-size: 13px;
       border: 1px solid var(--line);
       background: rgba(255,255,255,0.92);
@@ -347,8 +348,8 @@ button.primary:hover {
     }
 
     .quick-panel-summary {
-      width: 188px;
-      min-height: 44px;
+      width: 172px;
+      min-height: 40px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -425,7 +426,7 @@ button.primary:hover {
       line-height: 1.55;
     }
 
-    .layout-gap { height: 14px; }
+    .layout-gap { height: 8px; }
 
     .card {
       background: rgba(255,255,255,0.94);
@@ -435,16 +436,17 @@ button.primary:hover {
     }
 
     .toolbar-card {
-      padding: 16px;
+      padding: 10px 12px;
       display: grid;
-      gap: 12px;
+      gap: 8px;
       background: linear-gradient(135deg, #ffffff 0%, #eff6ff 100%);
       border-color: #b9cff5;
+      border-radius: 14px;
     }
 
     .toolbar-row {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
@@ -452,29 +454,29 @@ button.primary:hover {
 
     .toolbar-row .group {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
       align-items: center;
     }
 
     .toolbar-controls-row {
       justify-content: flex-start;
-      align-items: center;
+      align-items: flex-start;
     }
 
     .toolbar-inline-controls {
-      flex: 1 1 760px;
+      flex: 1 1 600px;
       min-width: 0;
       display: flex;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
       align-items: center;
-      justify-content: flex-end;
+      justify-content: flex-start;
     }
 
     .toolbar-summary-strip {
-      flex: 1 1 620px;
-      min-width: 520px;
+      flex: 1 1 520px;
+      min-width: 420px;
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 10px;
@@ -482,7 +484,7 @@ button.primary:hover {
 
     .toolbar-summary-item {
       min-width: 0;
-      padding: 10px 12px;
+      padding: 8px 10px;
       border: 1px solid #cfe0ff;
       border-radius: 14px;
       background: rgba(255, 255, 255, 0.78);
@@ -501,7 +503,7 @@ button.primary:hover {
     }
 
     .toolbar-summary-item strong {
-      font-size: 20px;
+      font-size: 18px;
       line-height: 1;
       white-space: nowrap;
     }
@@ -520,9 +522,9 @@ button.primary:hover {
     .toolbar-row input[type="date"] {
       border-radius: 12px;
       border: 1px solid var(--line);
-      padding: 10px 12px;
+      padding: 8px 11px;
       background: #ffffff;
-      min-height: 42px;
+      min-height: 38px;
       color: #0f2a55;
       font-weight: 700;
     }
@@ -536,7 +538,7 @@ button.primary:hover {
 
     .chip {
       border-radius: 999px;
-      padding: 9px 14px;
+      padding: 8px 13px;
       border: 1px solid #cfe0ff;
       background: linear-gradient(180deg, #ffffff 0%, #edf4ff 100%);
       color: #1749be;
@@ -556,7 +558,7 @@ button.primary:hover {
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      padding: 8px 12px;
+      padding: 7px 11px;
       border-radius: 999px;
       border: 1px solid var(--line);
       background: #f8fbff;
@@ -640,20 +642,22 @@ button.primary:hover {
     .main-grid {
       display: grid;
       grid-template-columns: minmax(0, 1fr);
-      gap: 16px;
+      gap: 8px;
       align-items: start;
       order: 20;
+      min-width: 0;
     }
 
     .board-card {
       overflow: hidden;
+      min-width: 0;
     }
 
     .board-head {
-      padding: 16px 18px;
+      padding: 10px 14px;
       border-bottom: 1px solid var(--line);
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
       gap: 12px;
       flex-wrap: wrap;
@@ -661,7 +665,7 @@ button.primary:hover {
 
     .board-head h2 {
       margin: 0;
-      font-size: 20px;
+      font-size: 19px;
     }
 
     .board-head p {
@@ -673,8 +677,9 @@ button.primary:hover {
 
     .board-wrap {
       overflow: auto;
-      max-height: calc(100vh - 320px);
+      max-height: calc(100vh - 238px);
       background: linear-gradient(180deg, #fbfdff 0%, #ffffff 12%);
+      max-width: 100%;
     }
 
     .week-date-jump-row {
@@ -683,16 +688,16 @@ button.primary:hover {
       z-index: 8;
       display: flex;
       gap: 8px;
-      padding: 12px 14px;
+      padding: 8px 10px;
       border-bottom: 1px solid var(--line);
       background: linear-gradient(180deg, #ffffff 0%, #eef6ff 100%);
       min-width: max-content;
     }
 
     .week-date-button {
-      min-width: 116px;
-      min-height: 38px;
-      padding: 8px 12px;
+      min-width: 110px;
+      min-height: 34px;
+      padding: 7px 11px;
       border-radius: 999px;
       border-color: #b9cff5;
       background: #ffffff;
@@ -724,8 +729,8 @@ button.primary:hover {
       font-size: 12px;
       color: #123b8a;
       text-align: center;
-      padding: 11px 6px;
-      min-width: 56px;
+      padding: 10px 5px;
+      min-width: 52px;
       white-space: nowrap;
     }
 
@@ -801,9 +806,9 @@ button.primary:hover {
       position: sticky;
       left: 0;
       z-index: 5;
-      min-width: 150px;
-      max-width: 150px;
-      width: 150px;
+      min-width: 132px;
+      max-width: 132px;
+      width: 132px;
       text-align: left;
       background: linear-gradient(180deg, #ffffff, #fbfdff);
       padding: 12px 14px;
@@ -826,8 +831,8 @@ button.primary:hover {
     }
 
     .schedule-table td {
-      height: 64px;
-      min-width: 56px;
+      height: 62px;
+      min-width: 52px;
       border-right: 1px solid #eaf0f8;
       border-bottom: 1px solid #e8eef6;
       padding: 4px;
@@ -1215,7 +1220,7 @@ button.primary:hover {
       .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .main-grid { grid-template-columns: 1fr; }
       .side-stack { position: static; }
-      .board-wrap { max-height: none; }
+      .board-wrap { max-height: calc(100vh - 238px); }
     }
 
     @media (max-width: 980px) {
@@ -1231,9 +1236,9 @@ button.primary:hover {
     }
 
     @media (max-width: 760px) {
-      .app-header { position: static; margin: -18px -18px 0; }
-      .app-shell { padding: 14px; }
-      .toolbar-card { padding: 14px; }
+      .app-header { position: static; margin: -10px -10px 0; }
+      .app-shell { padding: 10px; }
+      .toolbar-card { padding: 10px; }
       .brand h1 { font-size: 21px; }
       .brand-mark {
         width: 44px;
@@ -1243,7 +1248,7 @@ button.primary:hover {
       }
       .user-toolbar { justify-content: flex-start; }
       .schedule-table thead th.first-col,
-      .schedule-table tbody th { min-width: 140px; width: 140px; max-width: 140px; }
+      .schedule-table tbody th { min-width: 122px; width: 122px; max-width: 122px; }
     }
 .brand-hero {
   display: flex;

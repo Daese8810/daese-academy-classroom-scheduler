@@ -611,6 +611,10 @@ const boardTitle = state.ui.viewMode === 'week'
                     <label class="toggle-pill"><input type="checkbox" id="myOnly" ${state.ui.myOnly ? 'checked' : ''} /> 내가 예약한 것만 보기</label>
                     <label class="toggle-pill"><input type="checkbox" id="forceMobile" ${state.ui.forceMobile ? 'checked' : ''} /> 모바일 화면으로 보기</label>
                   </div>
+                  <div class="chip-row">
+                    <button class="chip ${state.ui.slotMinutes === 30 ? 'active' : ''}" data-action="set-slot-minutes" data-minutes="30">예약 단위 30분</button>
+                    <button class="chip ${state.ui.slotMinutes === 60 ? 'active' : ''}" data-action="set-slot-minutes" data-minutes="60">예약 단위 1시간</button>
+                  </div>
                 </div>
                 <div class="group">
                   <button class="primary" data-action="new-reservation">+ 빈 시간 예약</button>
@@ -638,18 +642,7 @@ const boardTitle = state.ui.viewMode === 'week'
                 <div class="board-head">
                   <div>
                     <h2>${escapeHtml(boardTitle)}</h2>
-                    <p>${escapeHtml(getBoardHintText(user))}</p>
                   </div>
-                  <div class="chip-row">
-  <button class="chip ${state.ui.slotMinutes === 30 ? 'active' : ''}" data-action="set-slot-minutes" data-minutes="30">
-    예약 단위 30분
-  </button>
-  <button class="chip ${state.ui.slotMinutes === 60 ? 'active' : ''}" data-action="set-slot-minutes" data-minutes="60">
-    예약 단위 1시간
-  </button>
-  <span class="inline-note">반복 예약 지원</span>
-  <span class="inline-note">모바일 보기 ${mobileMode ? '활성' : '비활성'}</span>
-</div>
                 </div>
                 <div class="board-wrap" id="boardWrap">
                   ${mobileMode ? renderMobileBoard(user) : renderBoard(user)}
