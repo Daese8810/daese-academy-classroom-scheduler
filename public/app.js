@@ -621,6 +621,7 @@ const boardTitle = state.ui.viewMode === 'week'
         `;
 
         bindAppEvents();
+        requestAnimationFrame(fitScheduleRowsToViewport);
       }
 
       function renderSideReservationItem(r) {
@@ -676,7 +677,7 @@ function renderWeekBoard(user) {
           const dayTone = dateIndex % 2 === 0 ? 'week-day-even' : 'week-day-odd';
           headRow1 += `<th class="day-group ${dayTone} ${dateIndex > 0 ? 'week-day-break' : ''}" colspan="${slots.length}" data-week-date="${escapeHtml(date)}">${escapeHtml(formatDateLabel(date))}</th>`;
           slots.forEach((slot, slotIndex) => {
-            headRow2 += `<th class="week-time-cell ${dayTone} ${slotIndex === 0 && dateIndex > 0 ? 'week-day-break' : ''}">${escapeHtml(slot)}</th>`;
+            headRow2 += `<th class="week-time-cell ${dayTone} ${slotIndex === 0 && dateIndex > 0 ? 'week-day-break' : ''}" data-time-key="${escapeHtml(`${date}|${slot}`)}">${escapeHtml(slot)}</th>`;
           });
         });
         headRow1 += '</tr>';
@@ -717,7 +718,7 @@ function renderWeekBoard(user) {
   const slotMinutes = getSlotMinutes();
   const isNow = date === now.date && timeToMinutes(slot) <= now.actualMinutes && now.actualMinutes < timeToMinutes(slot) + slotMinutes;
   const past = date < now.date || (date === now.date && timeToMinutes(slot) + slotMinutes <= now.actualMinutes);
-  html += `<td class="empty-slot ${cellClass} ${isNow ? 'now-marker' : ''} ${past ? 'past-slot' : ''}" data-action="new-reservation-cell" data-room-id="${escapeHtml(room.id)}" data-date="${escapeHtml(date)}" data-start="${escapeHtml(slot)}" title="${escapeHtml(`${room.short} ${formatDateLabel(date)} ${slot} 예약`)}"></td>`;
+  html += `<td class="empty-slot ${cellClass} ${isNow ? 'now-marker' : ''} ${past ? 'past-slot' : ''}" data-action="new-reservation-cell" data-room-id="${escapeHtml(room.id)}" data-date="${escapeHtml(date)}" data-start="${escapeHtml(slot)}" data-time-key="${escapeHtml(`${date}|${slot}`)}" title="${escapeHtml(`${room.short} ${formatDateLabel(date)} ${slot} 예약`)}"></td>`;
   i += 1;
 }
           }
@@ -739,7 +740,7 @@ function renderWeekBoard(user) {
         const head = `
           <tr>
             <th class="first-col">강의실</th>
-            ${slots.map(slot => `<th>${escapeHtml(slot)}</th>`).join('')}
+            ${slots.map(slot => `<th class="day-time-cell" data-time-key="${escapeHtml(`${date}|${slot}`)}">${escapeHtml(slot)}</th>`).join('')}
           </tr>
         `;
         const rows = visibleRooms.map(room => {
@@ -762,7 +763,7 @@ function renderWeekBoard(user) {
               const slotMinutes = getSlotMinutes();
 const isNow = date === now.date && timeToMinutes(slot) <= now.actualMinutes && now.actualMinutes < timeToMinutes(slot) + slotMinutes;
 const past = date < now.date || (date === now.date && timeToMinutes(slot) + slotMinutes <= now.actualMinutes);
-              row += `<td class="empty-slot ${isNow ? 'now-marker' : ''} ${past ? 'past-slot' : ''}" data-action="new-reservation-cell" data-room-id="${escapeHtml(room.id)}" data-date="${escapeHtml(date)}" data-start="${escapeHtml(slot)}" title="${escapeHtml(`${room.short} ${formatDateLabel(date)} ${slot} 예약`)}"></td>`;
+              row += `<td class="empty-slot ${isNow ? 'now-marker' : ''} ${past ? 'past-slot' : ''}" data-action="new-reservation-cell" data-room-id="${escapeHtml(room.id)}" data-date="${escapeHtml(date)}" data-start="${escapeHtml(slot)}" data-time-key="${escapeHtml(`${date}|${slot}`)}" title="${escapeHtml(`${room.short} ${formatDateLabel(date)} ${slot} 예약`)}"></td>`;
               i += 1;
             }
           }
@@ -908,6 +909,38 @@ const past = date < now.date || (date === now.date && timeToMinutes(slot) + slot
 
         appView.querySelectorAll('[data-action]').forEach(el => {
           el.addEventListener('click', handleActionClick);
+        });
+
+        appView.querySelectorAll('.empty-slot[data-time-key]').forEach(el => {
+          el.addEventListener('mouseenter', () => setTimeColumnHover(el.getAttribute('data-time-key'), true));
+          el.addEventListener('mouseleave', () => setTimeColumnHover(el.getAttribute('data-time-key'), false));
+        });
+      }
+
+      function fitScheduleRowsToViewport() {
+        const boardWrap = document.getElementById('boardWrap');
+        const table = boardWrap?.querySelector('.schedule-table');
+        if (!boardWrap || !table) return;
+        const roomCount = table.querySelectorAll('tbody tr').length;
+        if (!roomCount) return;
+        const rect = boardWrap.getBoundingClientRect();
+        const availableHeight = Math.max(260, window.innerHeight - rect.top - 12);
+        boardWrap.style.maxHeight = `${availableHeight}px`;
+        const fixedHeight = (table.tHead?.offsetHeight || 80) + (boardWrap.querySelector('.week-date-jump-row')?.offsetHeight || 0);
+        const rowHeight = Math.floor((availableHeight - fixedHeight - 2) / roomCount);
+        const compactHeight = Math.max(24, Math.min(56, rowHeight));
+        boardWrap.style.setProperty('--schedule-row-height', `${compactHeight}px`);
+        boardWrap.classList.toggle('compact-rows', compactHeight <= 34);
+      }
+
+      function setTimeColumnHover(timeKey, active) {
+        if (!timeKey) return;
+        const boardWrap = document.getElementById('boardWrap');
+        if (!boardWrap) return;
+        boardWrap.querySelectorAll('[data-time-key]').forEach(el => {
+          if (el.getAttribute('data-time-key') === timeKey) {
+            el.classList.toggle('time-hover', active);
+          }
         });
       }
 
@@ -1150,13 +1183,10 @@ case 'set-slot-minutes':
                   ${endOptions.map(time => `<option value="${escapeHtml(time)}" ${time === endValue ? 'selected' : ''}>${escapeHtml(time)}</option>`).join('')}
                 </select>
               </div>
+              <input id="resCategory" type="hidden" value="${escapeHtml(initialCategory)}" />
               <div class="field ${user.role === 'admin' ? '' : 'full'}">
-                <label for="resCategory">구분</label>
-                <select id="resCategory" required>
-                  <option value="usage" ${initialCategory === 'usage' ? 'selected' : ''}>사용 중</option>
-                  <option value="event" ${initialCategory === 'event' ? 'selected' : ''}>세미나/행사</option>
-                  ${user.role === 'admin' ? `<option value="blocked" ${initialCategory === 'blocked' ? 'selected' : ''}>관리자 차단</option>` : ''}
-                </select>
+                <label for="resTitle">용도</label>
+                <input id="resTitle" type="text" value="${escapeHtml(existing?.title || '')}" placeholder="예 : 수업, 직보, 클리닉, 기타" required />
               </div>
               ${user.role === 'admin' ? `
                 <div class="field">
@@ -1171,10 +1201,6 @@ case 'set-slot-minutes':
                   <input value="${escapeHtml(ownerValue)} (${escapeHtml(deptValue)})" disabled />
                 </div>
               `}
-              <div class="field full">
-                <label for="resTitle">용도</label>
-                <input id="resTitle" type="text" value="${escapeHtml(existing?.title || '')}" placeholder="예 : 수업, 직보, 클리닉, 기타" required />
-              </div>
               <div class="field full">
                 <label for="resNote">메모</label>
                 <textarea id="resNote" placeholder="선택사항">${escapeHtml(existing?.note || '')}</textarea>
