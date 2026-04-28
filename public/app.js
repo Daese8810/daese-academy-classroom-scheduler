@@ -574,7 +574,7 @@ const boardTitle = state.ui.viewMode === 'week'
                   </div>
                 </div>
                 <div class="group">
-                  <button class="primary" data-action="new-reservation">+ 빈 시간 예약</button>
+                  <button class="primary" data-action="new-reservation">강의실 예약</button>
                 </div>
               </div>
 <div class="toolbar-row" id="roomCapacityRow" style="display:none;">
