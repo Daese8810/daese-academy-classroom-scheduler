@@ -595,7 +595,6 @@ const boardTitle = state.ui.viewMode === 'week'
                 </div>
                 <div class="group">
                   <button class="primary" data-action="new-reservation">+ 빈 시간 예약</button>
-                  ${user.role === 'admin' ? '<button class="warn" data-action="new-block">관리자 차단 추가</button>' : ''}
                 </div>
               </div>
 <div class="toolbar-row" id="roomCapacityRow" style="display:none;">
