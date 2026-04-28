@@ -488,6 +488,7 @@ const boardTitle = state.ui.viewMode === 'week'
   : state.ui.viewMode === 'weekend'
     ? `${rangeTitle} · 주말 시간표`
     : `${rangeTitle} · 일간 시간표`;
+const boardDates = getBoardDates(selectedDate);
 
         appView.innerHTML = `
           <header class="app-header">
@@ -571,6 +572,7 @@ const boardTitle = state.ui.viewMode === 'week'
                   <div>
                     <h2>${escapeHtml(boardTitle)}</h2>
                   </div>
+                  ${mobileMode ? '' : renderWeekDateJumpButtons(boardDates)}
                 </div>
                 <div class="board-wrap" id="boardWrap">
                   ${mobileMode ? renderMobileBoard(user) : renderBoard(user)}
@@ -595,13 +597,14 @@ const boardTitle = state.ui.viewMode === 'week'
       }
 
       function renderWeekDateJumpButtons(dates) {
-        if (state.ui.viewMode !== 'week') return '';
+        if (state.ui.viewMode === 'day') return '';
+        const activeDate = dates.includes(state.ui.selectedDate) ? state.ui.selectedDate : dates[0];
         return `
           <div class="week-date-jump-row">
             ${dates.map(date => `
               <button
                 type="button"
-                class="week-date-button ${state.ui.selectedDate === date ? 'active' : ''}"
+                class="week-date-button ${activeDate === date ? 'active' : ''}"
                 data-action="jump-week-date"
                 data-date="${escapeHtml(date)}"
               >
@@ -645,7 +648,6 @@ function renderWeekBoard(user) {
 
         const rowsHtml = visibleRooms.map(room => renderWeekRoomRow(room, dates, user, now)).join('');
         return `
-          ${renderWeekDateJumpButtons(dates)}
           <table class="schedule-table week-table">
             <thead>${headRow1}${headRow2}</thead>
             <tbody>${rowsHtml}</tbody>
