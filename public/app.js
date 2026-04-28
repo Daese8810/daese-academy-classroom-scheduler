@@ -73,6 +73,8 @@ const ROOM_CAPACITY = [
           delete saved.myOnly;
           delete saved.forceMobile;
           delete saved.slotMinutes;
+          delete saved.floor;
+          delete saved.teacher;
           return Object.assign(defaultUiState(), saved);
         } catch (error) {
           console.error(error);
@@ -547,20 +549,6 @@ const boardTitle = state.ui.viewMode === 'week'
               </div>
               <div class="toolbar-row toolbar-controls-row">
                 <div class="group">
-                  <select id="floorFilter">
-                    <option value="all" ${state.ui.floor === 'all' ? 'selected' : ''}>전체 층</option>
-                    <option value="6층" ${state.ui.floor === '6층' ? 'selected' : ''}>6층만</option>
-                    <option value="7층" ${state.ui.floor === '7층' ? 'selected' : ''}>7층만</option>
-                  </select>
-                  <select id="teacherFilter">
-                    <option value="all">전체 선생님</option>
-                    ${state.users.map(u => `<option value="${escapeHtml(u.id)}" ${state.ui.teacher === u.id ? 'selected' : ''}>${escapeHtml(u.id)} (${escapeHtml(u.dept)})</option>`).join('')}
-                  </select>
-                  <select id="deptFilter">
-                    <option value="all" ${state.ui.dept === 'all' ? 'selected' : ''}>전체 학과</option>
-                    <option value="영어과" ${state.ui.dept === '영어과' ? 'selected' : ''}>영어과만 보기</option>
-                    <option value="국어과" ${state.ui.dept === '국어과' ? 'selected' : ''}>국어과만 보기</option>
-                  </select>
                   <select id="viewModeSelect">
   <option value="week" ${state.ui.viewMode === 'week' ? 'selected' : ''}>주간 보기</option>
   <option value="weekend" ${state.ui.viewMode === 'weekend' ? 'selected' : ''}>주말 보기</option>
@@ -866,26 +854,6 @@ const past = date < now.date || (date === now.date && timeToMinutes(slot) + slot
           } catch (error) {
             showToast(error.message || '일정을 불러오지 못했습니다.', 'error');
           }
-        });
-        appView.querySelector('#floorFilter').addEventListener('change', async (e) => {
-          state.ui.floor = e.target.value;
-          saveUiState();
-          try {
-            await refreshSummaryData();
-            render();
-          } catch (error) {
-            showToast(error.message || '요약 정보를 불러오지 못했습니다.', 'error');
-          }
-        });
-        appView.querySelector('#teacherFilter').addEventListener('change', (e) => {
-          state.ui.teacher = e.target.value;
-          saveUiState();
-          render();
-        });
-        appView.querySelector('#deptFilter').addEventListener('change', (e) => {
-          state.ui.dept = e.target.value;
-          saveUiState();
-          render();
         });
         appView.querySelector('#viewModeSelect').addEventListener('change', async (e) => {
           state.ui.viewMode = e.target.value;
