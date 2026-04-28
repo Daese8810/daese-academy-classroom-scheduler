@@ -69,6 +69,10 @@ const ROOM_CAPACITY = [
           if (!raw) return defaultUiState();
           const saved = JSON.parse(raw) || {};
           delete saved.remainingTodayOnly;
+          delete saved.availableNowOnly;
+          delete saved.myOnly;
+          delete saved.forceMobile;
+          delete saved.slotMinutes;
           return Object.assign(defaultUiState(), saved);
         } catch (error) {
           console.error(error);
@@ -565,7 +569,7 @@ const boardTitle = state.ui.viewMode === 'week'
                     <button class="chip ${state.ui.dept === '영어과' ? 'active' : ''}" data-action="quick-dept" data-dept="영어과">영어과만 보기</button>
                     <button class="chip ${state.ui.dept === '국어과' ? 'active' : ''}" data-action="quick-dept" data-dept="국어과">국어과만 보기</button>
                     <details class="capacity-dropdown">
-                      <summary class="chip">강의실별 수용 인원 확인</summary>
+                      <summary class="chip">강의실별 수용 인원</summary>
                       <div class="capacity-dropdown-panel">
                         ${ROOM_CAPACITY.map(room => `
                           <div class="capacity-row">
@@ -575,15 +579,6 @@ const boardTitle = state.ui.viewMode === 'week'
                         `).join('')}
                       </div>
                     </details>
-                  </div>
-                  <div class="group">
-                    <label class="toggle-pill"><input type="checkbox" id="availableNowOnly" ${state.ui.availableNowOnly ? 'checked' : ''} /> 지금 비어 있는 강의실만 보기</label>
-                    <label class="toggle-pill"><input type="checkbox" id="myOnly" ${state.ui.myOnly ? 'checked' : ''} /> 내가 예약한 것만 보기</label>
-                    <label class="toggle-pill"><input type="checkbox" id="forceMobile" ${state.ui.forceMobile ? 'checked' : ''} /> 모바일 화면으로 보기</label>
-                  </div>
-                  <div class="chip-row">
-                    <button class="chip ${state.ui.slotMinutes === 30 ? 'active' : ''}" data-action="set-slot-minutes" data-minutes="30">예약 단위 30분</button>
-                    <button class="chip ${state.ui.slotMinutes === 60 ? 'active' : ''}" data-action="set-slot-minutes" data-minutes="60">예약 단위 1시간</button>
                   </div>
                 </div>
                 <div class="group">
@@ -898,7 +893,9 @@ const past = date < now.date || (date === now.date && timeToMinutes(slot) + slot
           }
         });
         ['availableNowOnly', 'myOnly', 'forceMobile'].forEach(key => {
-          appView.querySelector(`#${key}`).addEventListener('change', (e) => {
+          const control = appView.querySelector(`#${key}`);
+          if (!control) return;
+          control.addEventListener('change', (e) => {
             state.ui[key] = e.target.checked;
             saveUiState();
             render();
