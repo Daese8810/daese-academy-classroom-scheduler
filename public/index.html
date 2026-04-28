@@ -862,12 +862,14 @@ button.primary:hover {
 
     .schedule-table td {
       height: var(--schedule-row-height, 54px);
+      max-height: var(--schedule-row-height, 54px);
       min-width: 46px;
       border-right: 1px solid #eaf0f8;
       border-bottom: 1px solid #e8eef6;
       padding: 3px;
       vertical-align: top;
       background: white;
+      overflow: hidden;
     }
 
     .schedule-table td.empty-slot {
@@ -934,6 +936,15 @@ button.primary:hover {
       justify-content: space-between;
       gap: 4px;
       position: relative;
+      min-width: 0;
+      min-height: 0;
+      max-height: 100%;
+    }
+
+    .res-box > div {
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
     }
 
     .board-wrap.compact-rows .schedule-table tbody th {
@@ -966,6 +977,7 @@ button.primary:hover {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      max-width: 100%;
     }
 
     .res-box small {
@@ -974,6 +986,8 @@ button.primary:hover {
       overflow: hidden;
       text-overflow: ellipsis;
       color: rgba(17,24,39,0.78);
+      max-width: 100%;
+      flex: 0 1 auto;
     }
 
     .res-usage {
@@ -1014,12 +1028,16 @@ button.primary:hover {
       display: inline-flex;
       align-items: center;
       width: fit-content;
+      max-width: 100%;
       padding: 2px 7px;
       border-radius: 999px;
       font-size: 11px;
       font-weight: 700;
       background: rgba(255,255,255,0.74);
       border: 1px solid rgba(255,255,255,0.55);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .side-stack {
