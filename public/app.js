@@ -556,36 +556,12 @@ const boardTitle = state.ui.viewMode === 'week'
                     <button class="chip ${state.ui.dept === 'all' ? 'active' : ''}" data-action="quick-dept" data-dept="all">전체 보기</button>
                     <button class="chip ${state.ui.dept === '영어과' ? 'active' : ''}" data-action="quick-dept" data-dept="영어과">영어과만 보기</button>
                     <button class="chip ${state.ui.dept === '국어과' ? 'active' : ''}" data-action="quick-dept" data-dept="국어과">국어과만 보기</button>
-                    <details class="capacity-dropdown">
-                      <summary class="chip">강의실별 수용 인원</summary>
-                      <div class="capacity-dropdown-panel">
-                        ${ROOM_CAPACITY.map(room => `
-                          <div class="capacity-row">
-                            <span>${escapeHtml(room.name)}</span>
-                            <strong>${room.capacity}명</strong>
-                          </div>
-                        `).join('')}
-                      </div>
-                    </details>
+                    <button class="chip" data-action="open-capacity-dialog">강의실별 수용 인원</button>
                   </div>
                 </div>
                 <div class="group">
                   <button class="primary" data-action="new-reservation">강의실 예약</button>
                 </div>
-              </div>
-<div class="toolbar-row" id="roomCapacityRow" style="display:none;">
-  <div class="card" style="width:100%; padding:14px 16px; border-radius:14px; background:#fbfdff;">
-    <div style="font-weight:700; margin-bottom:10px;">강의실별 수용 인원</div>
-    <div style="display:grid; gap:8px;">
-      ${ROOM_CAPACITY.map(room => `
-        <div style="display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid #eef2f7;">
-          <span>${escapeHtml(room.name)}</span>
-          <strong>${room.capacity}명</strong>
-        </div>
-      `).join('')}
-    </div>
-  </div>
-</div>
               </div>
             </section>
             <div class="layout-gap"></div>
@@ -970,16 +946,14 @@ const past = date < now.date || (date === now.date && timeToMinutes(slot) + slot
             }
             return;
           }
-          case 'quick-dept':
+case 'quick-dept':
   state.ui.dept = e.currentTarget.getAttribute('data-dept') || 'all';
   saveUiState();
   render();
   return;
 
-case 'toggle-room-capacity': {
-  const row = document.getElementById('roomCapacityRow');
-  if (!row) return;
-  row.style.display = row.style.display === 'none' ? '' : 'none';
+case 'open-capacity-dialog': {
+  openCapacityModal();
   return;
 }
 
@@ -1043,6 +1017,25 @@ case 'set-slot-minutes':
             render();
             return;
         }
+      }
+
+      function openCapacityModal() {
+        openModal(`
+          <div class="modal capacity-modal">
+            <h2>강의실별 수용 인원</h2>
+            <div class="capacity-modal-list">
+              ${ROOM_CAPACITY.map(room => `
+                <div class="capacity-row">
+                  <span>${escapeHtml(room.name)}</span>
+                  <strong>${room.capacity}명</strong>
+                </div>
+              `).join('')}
+            </div>
+            <div class="modal-actions">
+              <button type="button" data-modal-close>닫기</button>
+            </div>
+          </div>
+        `);
       }
 
       function openPasswordModal() {

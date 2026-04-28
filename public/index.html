@@ -1386,46 +1386,31 @@ button.primary:hover {
   object-fit: contain;
   background: transparent;
 }
-    .capacity-dropdown {
-  position: relative;
-  display: inline-block;
-}
+    .capacity-modal {
+      width: min(420px, 100%);
+    }
 
-.capacity-dropdown summary {
-  list-style: none;
-}
+    .capacity-modal-list {
+      display: grid;
+      gap: 6px;
+      margin-top: 16px;
+    }
 
-.capacity-dropdown summary::-webkit-details-marker {
-  display: none;
-}
+    .capacity-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      border: 1px solid #dbe7fb;
+      border-radius: 12px;
+      background: #f8fbff;
+      white-space: nowrap;
+    }
 
-.capacity-dropdown-panel {
-  position: absolute;
-  top: calc(100% + 10px);
-  right: 0;
-  z-index: 30;
-  min-width: 280px;
-  max-height: 420px;
-  overflow-y: auto;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: #ffffff;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
-}
-
-.capacity-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 0;
-  border-bottom: 1px solid #eef2f7;
-  white-space: nowrap;
-}
-
-.capacity-row:last-child {
-  border-bottom: none;
-}
+    .capacity-row strong {
+      color: #1749be;
+    }
   </style>
 </head>
 <body>
