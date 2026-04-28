@@ -539,23 +539,19 @@ const boardTitle = state.ui.viewMode === 'week'
               <div class="layout-gap"></div>
             ` : ''}
             <section class="card toolbar-card">
-              <div class="toolbar-row">
+              <div class="toolbar-row toolbar-main-row">
                 <div class="group">
                   <button data-action="move-date" data-step="-1">${escapeHtml(prevLabel)}</button>
 <input type="date" id="selectedDateInput" value="${escapeHtml(state.ui.selectedDate)}" />
 <button data-action="move-date" data-step="1">${escapeHtml(nextLabel)}</button>
                   <button class="ghost" data-action="go-today">오늘로</button>
                 </div>
-              </div>
-              <div class="toolbar-row toolbar-controls-row">
-                <div class="group">
+                <div class="toolbar-inline-controls">
                   <select id="viewModeSelect">
   <option value="week" ${state.ui.viewMode === 'week' ? 'selected' : ''}>주간 보기</option>
   <option value="weekend" ${state.ui.viewMode === 'weekend' ? 'selected' : ''}>주말 보기</option>
   <option value="day" ${state.ui.viewMode === 'day' ? 'selected' : ''}>일간 보기</option>
 </select>
-                </div>
-                <div class="toolbar-inline-controls">
                   <div class="chip-row">
                     <button class="chip ${state.ui.dept === 'all' ? 'active' : ''}" data-action="quick-dept" data-dept="all">전체 보기</button>
                     <button class="chip ${state.ui.dept === '영어과' ? 'active' : ''}" data-action="quick-dept" data-dept="영어과">영어과만 보기</button>
