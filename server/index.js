@@ -297,7 +297,7 @@ function buildSupplyRequestMessage(payload) {
   ].join('\n');
 }
 
-async function sendKakaoWorkMessageByEmail({ email, text }) {
+async function sendSupplyRequestKakaoWorkMessageByEmail({ email, text }) {
   if (!KAKAOWORK_BOT_APP_KEY) {
     throw new Error('KAKAOWORK_BOT_APP_KEY_MISSING');
   }
@@ -1722,7 +1722,7 @@ app.post('/api/supply-requests', async (req, res, next) => {
       quantity,
     });
 
-    await sendKakaoWorkMessageByEmail({
+    await sendSupplyRequestKakaoWorkMessageByEmail({
       email: KAKAOWORK_SUPPLY_REQUEST_EMAIL,
       text: message,
     });
