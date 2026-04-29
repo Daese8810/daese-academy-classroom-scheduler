@@ -72,7 +72,7 @@ const CLINIC_LISTENING_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_LISTENING_UP
 const CLINIC_DICTATION_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_DICTATION_UPLOAD_MAX_BYTES || 8 * 1024 * 1024);
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_VOCABULARY_MODEL = process.env.OPENAI_VOCABULARY_MODEL || 'gpt-4.1-mini';
-const OPENAI_VOCABULARY_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_VOCABULARY_MAX_OUTPUT_TOKENS || 12000);
+const OPENAI_VOCABULARY_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_VOCABULARY_MAX_OUTPUT_TOKENS || 32000);
 const UPLOAD_ROOT = process.env.UPLOAD_ROOT || path.join(__dirname, '..', 'uploads');
 const CLINIC_LISTENING_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening');
 const CLINIC_LISTENING_BOOK_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening-books');
@@ -2278,17 +2278,18 @@ app.post('/api/vocabulary-workbook/generate', async (req, res, next) => {
             role: 'user',
             content: [
               `Student level: ${level}`,
-              `Words per Day: ${wordsPerDay}`,
-              'Split the given words in the original order into Day sections by Words per Day.',
-              'The first section heading must be exactly: Day 1',
-              'The second section heading must be exactly: Day 2, and so on. Do not add words like Vocabulary, Workbook, Level, or overview headings.',
+              `Required word count in this Day: ${words.length}`,
+              `Requested Words per Day: ${wordsPerDay}`,
+              'The caller already splits words by Day. Create material for this single Day only.',
+              'The only section heading must be exactly: Day 1',
+              'Do not create Day 2 or any additional Day sections.',
               'Inside each Day, restart numbering from 1.',
               'For every vocabulary word, use exactly this 3-line format:',
               '1. Word [IPA] (Korean pronunciation) - Korean meanings',
               '\uC608\uBB38: one natural English example sentence for the student level',
               '\uD574\uC11D: Korean translation of the example sentence',
               'All meanings, Korean pronunciations, and translations must be in Korean. Do not use labels such as Example, Meaning, or \uB73B.',
-              'Do not skip, reorder, or add words.',
+              `Do not skip, reorder, or add words. You must output exactly ${words.length} numbered vocabulary entries.`,
               '',
               'Words:',
               numberedWords,
