@@ -69,9 +69,14 @@ const CLINIC_LISTENING_GAS_URL = process.env.CLINIC_LISTENING_GAS_URL ||
 const CLINIC_LISTENING_GRADES = ['초등부', '중1', '중2', '중3', '고1', '고2', '초등부 Starter'];
 const CLINIC_LISTENING_SHEET_SYNC_MIN_VERSION = 3;
 const CLINIC_LISTENING_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_LISTENING_UPLOAD_MAX_BYTES || 100 * 1024 * 1024);
+const CLINIC_DICTATION_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_DICTATION_UPLOAD_MAX_BYTES || 8 * 1024 * 1024);
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const OPENAI_VOCABULARY_MODEL = process.env.OPENAI_VOCABULARY_MODEL || 'gpt-4.1-mini';
+const OPENAI_VOCABULARY_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_VOCABULARY_MAX_OUTPUT_TOKENS || 12000);
 const UPLOAD_ROOT = process.env.UPLOAD_ROOT || path.join(__dirname, '..', 'uploads');
 const CLINIC_LISTENING_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening');
 const CLINIC_LISTENING_BOOK_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening-books');
+const CLINIC_DICTATION_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'dictation');
 const CLINIC_LISTENING_BOOK_COMMON_GRADE = '공용';
 const TODO_ALLOWED_ORIGINS = new Set([
   'https://daeseenglish.com',
@@ -166,6 +171,19 @@ app.use('/api/clinic-listening-books', (req, res, next) => {
   next();
 });
 app.use('/api/clinic-listening-books', express.json({ limit: '160mb' }));
+app.use('/api/clinic-dictation', (req, res, next) => {
+  const origin = String(req.headers.origin || '');
+  const originRoot = origin.replace(/:\d+$/, '');
+  if (TODO_ALLOWED_ORIGINS.has(origin) || TODO_ALLOWED_ORIGINS.has(originRoot)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+app.use('/api/clinic-dictation', express.json({ limit: '12mb' }));
 app.use('/api/dashboard-storage', (req, res, next) => {
   const origin = String(req.headers.origin || '');
   const originRoot = origin.replace(/:\d+$/, '');
@@ -192,6 +210,19 @@ app.use('/api/supply-requests', (req, res, next) => {
   next();
 });
 app.use('/api/supply-requests', express.json({ limit: '64kb' }));
+app.use('/api/vocabulary-workbook', (req, res, next) => {
+  const origin = String(req.headers.origin || '');
+  const originRoot = origin.replace(/:\d+$/, '');
+  if (TODO_ALLOWED_ORIGINS.has(origin) || TODO_ALLOWED_ORIGINS.has(originRoot)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+app.use('/api/vocabulary-workbook', express.json({ limit: '512kb' }));
 app.use('/uploads', express.static(UPLOAD_ROOT, {
   etag: true,
   maxAge: '7d',
@@ -258,6 +289,40 @@ function verifyPassword(password, stored) {
 
 function jsonError(res, status, message, extra = {}) {
   res.status(status).json({ ok: false, message, ...extra });
+}
+
+function normalizeVocabularyWorkbookWords(raw) {
+  const source = Array.isArray(raw) ? raw.join('\n') : String(raw || '');
+  const seen = new Set();
+  const words = [];
+  for (const part of source.split(/[\r\n,\t]+/)) {
+    const word = String(part || '').trim().replace(/^[-*\d.\s]+/, '').trim();
+    if (!word) continue;
+    const key = word.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    words.push(word.slice(0, 80));
+    if (words.length >= 300) break;
+  }
+  return words;
+}
+
+function extractOpenAIResponseText(data) {
+  if (!data || typeof data !== 'object') return '';
+  if (typeof data.output_text === 'string' && data.output_text.trim()) {
+    return data.output_text.trim();
+  }
+  const chunks = [];
+  const output = Array.isArray(data.output) ? data.output : [];
+  for (const item of output) {
+    const content = item && Array.isArray(item.content) ? item.content : [];
+    for (const part of content) {
+      if (!part || typeof part !== 'object') continue;
+      if (typeof part.text === 'string') chunks.push(part.text);
+      if (typeof part.output_text === 'string') chunks.push(part.output_text);
+    }
+  }
+  return chunks.join('\n').trim();
 }
 
 function sanitizeSupplyRequestText(value, maxLength = 500) {
@@ -806,6 +871,27 @@ function normalizeClinicListeningAnswers(raw) {
   return (source.match(/\d/g) || []).join(',');
 }
 
+function normalizeClinicStudentText(raw, max = 120) {
+  return String(raw || '').trim().slice(0, max);
+}
+
+function normalizeClinicPhone(raw) {
+  return String(raw || '').replace(/[^\d+]/g, '').trim().slice(0, 40);
+}
+
+function normalizePositiveInteger(raw, min, max) {
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= min && value <= max ? value : 0;
+}
+
+function normalizeWrongAnswerNumbers(raw) {
+  const source = Array.isArray(raw) ? raw.join(',') : String(raw || '');
+  return (source.match(/\d+/g) || [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value > 0 && value <= 300)
+    .join(',');
+}
+
 function clinicListeningMaterialPublic(row) {
   return {
     grade: row.grade,
@@ -834,6 +920,35 @@ function clinicListeningBookPublic(row, days = []) {
       audioFileName: day.audio_file_name || '',
       updatedAt: day.updated_at || null,
     })),
+  };
+}
+
+function clinicDictationAttemptPublic(row) {
+  const wrongAnswers = String(row.wrong_answers || '')
+    .split(',')
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isInteger(value) && value > 0);
+  const dictationRequired = Boolean(row.dictation_required);
+  const dictationSubmitted = Boolean(row.dictation_submitted);
+  return {
+    id: row.id,
+    phone: row.phone,
+    name: row.student_name || '',
+    className: row.class_name || '',
+    grade: row.grade,
+    day: `Day ${row.day_number}`,
+    dayNumber: Number(row.day_number || 0),
+    totalCount: Number(row.total_count || 0),
+    correctCount: Number(row.correct_count || 0),
+    wrongAnswers,
+    dictationRequired,
+    dictationSubmitted,
+    status: !dictationRequired ? 'perfect' : dictationSubmitted ? 'submitted' : 'pending',
+    imageUrl: row.dictation_image_url || '',
+    imageName: row.dictation_image_name || '',
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+    submittedAt: row.submitted_at || null,
   };
 }
 
@@ -879,6 +994,53 @@ async function saveClinicListeningUpload(req, rawFile, grade, dayNumber) {
     `clinic-listening-${grade}-day-${dayNumber}`,
   );
   return saved ? saved.link : '';
+}
+
+function dictationFileExtensionFromMime(mime, fallbackName) {
+  const normalized = String(mime || '').toLowerCase();
+  if (normalized.includes('jpeg') || normalized.includes('jpg')) return '.jpg';
+  if (normalized.includes('png')) return '.png';
+  if (normalized.includes('webp')) return '.webp';
+  if (normalized.includes('heic')) return '.heic';
+  if (normalized.includes('heif')) return '.heif';
+  const ext = path.extname(String(fallbackName || '')).toLowerCase().replace(/[^a-z0-9.]/g, '').slice(0, 12);
+  return ext || '.jpg';
+}
+
+async function saveClinicDictationUpload(req, rawFile) {
+  if (!rawFile || typeof rawFile !== 'object') {
+    throw new Error('DICTATION_FILE_INVALID');
+  }
+  const dataUrl = String(rawFile.dataUrl || '').trim();
+  const match = /^data:([^;,]+)?;base64,(.+)$/s.exec(dataUrl);
+  if (!match) {
+    throw new Error('DICTATION_FILE_INVALID');
+  }
+
+  const mime = String(match[1] || '').toLowerCase();
+  if (!/^image\/(jpeg|jpg|png|webp|heic|heif)$/.test(mime)) {
+    throw new Error('DICTATION_FILE_INVALID');
+  }
+
+  const buffer = Buffer.from(match[2], 'base64');
+  const declaredSize = Number(rawFile.size || 0);
+  if (
+    !buffer.length ||
+    buffer.length > CLINIC_DICTATION_UPLOAD_MAX_BYTES ||
+    (Number.isFinite(declaredSize) && declaredSize > 0 && declaredSize > CLINIC_DICTATION_UPLOAD_MAX_BYTES)
+  ) {
+    throw new Error('DICTATION_FILE_TOO_LARGE');
+  }
+
+  await fs.promises.mkdir(CLINIC_DICTATION_UPLOAD_DIR, { recursive: true });
+  const originalName = sanitizeUploadFileName(rawFile.name || 'dictation-homework.jpg');
+  const ext = dictationFileExtensionFromMime(mime, originalName);
+  const safeName = `${Date.now()}-${crypto.randomUUID()}${ext}`;
+  await fs.promises.writeFile(path.join(CLINIC_DICTATION_UPLOAD_DIR, safeName), buffer, { flag: 'wx' });
+  return {
+    name: safeName,
+    url: `${publicBaseUrl(req)}/uploads/dictation/${encodeURIComponent(safeName)}`,
+  };
 }
 
 async function fetchClinicListeningGasJson(params) {
@@ -1468,6 +1630,32 @@ async function ensureClinicListeningMaterialTables() {
       ON clinic_listening_books (grade, title);
     CREATE INDEX IF NOT EXISTS idx_clinic_listening_book_days_book_day
       ON clinic_listening_book_days (book_id, day_number);
+
+    CREATE TABLE IF NOT EXISTS clinic_dictation_attempts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      phone TEXT NOT NULL,
+      student_name TEXT NOT NULL DEFAULT '',
+      class_name TEXT NOT NULL DEFAULT '',
+      grade TEXT NOT NULL,
+      day_number INTEGER NOT NULL CHECK (day_number BETWEEN 1 AND 60),
+      total_count INTEGER NOT NULL CHECK (total_count > 0),
+      correct_count INTEGER NOT NULL CHECK (correct_count >= 0),
+      wrong_answers TEXT NOT NULL DEFAULT '',
+      dictation_required BOOLEAN NOT NULL DEFAULT FALSE,
+      dictation_submitted BOOLEAN NOT NULL DEFAULT FALSE,
+      submitted_at TIMESTAMPTZ NULL,
+      dictation_image_url TEXT NOT NULL DEFAULT '',
+      dictation_image_name TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (phone, grade, day_number),
+      CHECK (correct_count <= total_count)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_clinic_dictation_attempts_phone_time
+      ON clinic_dictation_attempts (phone, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_clinic_dictation_attempts_class_status
+      ON clinic_dictation_attempts (class_name, dictation_required, dictation_submitted);
   `);
 }
 
@@ -2047,6 +2235,91 @@ app.post('/api/supply-requests', async (req, res, next) => {
   }
 });
 
+app.post('/api/vocabulary-workbook/generate', async (req, res, next) => {
+  try {
+    if (!OPENAI_API_KEY) {
+      return jsonError(res, 503, '\uB2E8\uC5B4\uC7A5 \uC81C\uC791 API \uD0A4\uAC00 \uC11C\uBC84\uC5D0 \uC124\uC815\uB418\uC5B4 \uC788\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.');
+    }
+
+    const level = String(req.body.level || '').trim().slice(0, 40);
+    const wordsPerDay = Number.parseInt(String(req.body.wordsPerDay || '40'), 10);
+    const words = normalizeVocabularyWorkbookWords(req.body.words);
+
+    if (!level) {
+      return jsonError(res, 400, '\uB808\uBCA8\uC744 \uC785\uB825\uD574\uC8FC\uC138\uC694.');
+    }
+    if (!Number.isInteger(wordsPerDay) || wordsPerDay < 1 || wordsPerDay > 100) {
+      return jsonError(res, 400, 'Day \uB2F9 \uB2E8\uC5B4 \uAC1C\uC218\uB294 1\uAC1C\uBD80\uD130 100\uAC1C\uAE4C\uC9C0 \uC785\uB825\uD574\uC8FC\uC138\uC694.');
+    }
+    if (!words.length) {
+      return jsonError(res, 400, '\uC601\uC5B4 \uB2E8\uC5B4\uB97C \uC785\uB825\uD574\uC8FC\uC138\uC694.');
+    }
+
+    const numberedWords = words.map((word, index) => `${index + 1}. ${word}`).join('\n');
+    const response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: OPENAI_VOCABULARY_MODEL,
+        input: [
+          {
+            role: 'system',
+            content: 'You create Korean English-academy vocabulary workbook material. Output plain text only. Follow the requested labels and headings exactly.',
+          },
+          {
+            role: 'user',
+            content: [
+              `Student level: ${level}`,
+              `Words per Day: ${wordsPerDay}`,
+              'Split the given words in the original order into Day sections by Words per Day.',
+              'The first section heading must be exactly: Day 1',
+              'The second section heading must be exactly: Day 2, and so on. Do not add words like Vocabulary, Workbook, Level, or overview headings.',
+              'Inside each Day, restart numbering from 1.',
+              'For every vocabulary word, use exactly this 3-line format:',
+              '1. Word [IPA] (Korean pronunciation) - Korean meanings',
+              '\uC608\uBB38: one natural English example sentence for the student level',
+              '\uD574\uC11D: Korean translation of the example sentence',
+              'All meanings, Korean pronunciations, and translations must be in Korean. Do not use labels such as Example, Meaning, or \uB73B.',
+              'Do not skip, reorder, or add words.',
+              '',
+              'Words:',
+              numberedWords,
+            ].join('\n'),
+          },
+        ],
+        temperature: 0.2,
+        max_output_tokens: OPENAI_VOCABULARY_MAX_OUTPUT_TOKENS,
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.error('OpenAI vocabulary workbook error:', response.status, body.slice(0, 500));
+      return jsonError(res, 502, `OpenAI \uC751\uB2F5 \uC624\uB958: HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const content = extractOpenAIResponseText(data);
+    if (!content) {
+      return jsonError(res, 502, 'OpenAI \uC751\uB2F5\uC5D0\uC11C \uB2E8\uC5B4\uC7A5 \uB0B4\uC6A9\uC744 \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.');
+    }
+
+    res.json({
+      ok: true,
+      action: 'generateVocabularyWorkbook',
+      level,
+      wordsPerDay,
+      wordCount: words.length,
+      content,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/clinic-listening-books', async (req, res, next) => {
   try {
     const booksRes = await pool.query(
@@ -2424,6 +2697,234 @@ app.post('/api/clinic-listening-materials', async (req, res, next) => {
       action: 'saveListeningMaterial',
       material: clinicListeningMaterialPublic(rows[0]),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/clinic-dictation', async (req, res, next) => {
+  try {
+    const phone = normalizeClinicPhone(req.query.phone);
+    if (!phone) {
+      return jsonError(res, 400, '학생 연락처가 필요합니다.');
+    }
+
+    const { rows } = await pool.query(
+      `SELECT id, phone, student_name, class_name, grade, day_number,
+              total_count, correct_count, wrong_answers,
+              dictation_required, dictation_submitted, submitted_at,
+              dictation_image_url, dictation_image_name,
+              created_at, updated_at
+         FROM clinic_dictation_attempts
+        WHERE phone = $1
+        ORDER BY updated_at DESC, grade ASC, day_number DESC`,
+      [phone]
+    );
+
+    res.json({ ok: true, attempts: rows.map(clinicDictationAttemptPublic) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+
+app.get('/api/clinic-dictation/admin', async (req, res, next) => {
+  try {
+    const filters = [];
+    const values = [];
+    const addFilter = (sql, value) => {
+      values.push(value);
+      filters.push(sql.replace('?', `$${values.length}`));
+    };
+
+    const className = normalizeClinicStudentText(req.query.className);
+    const grade = normalizeClinicListeningGrade(req.query.grade);
+    const status = String(req.query.status || '').trim();
+    const phone = normalizeClinicPhone(req.query.phone);
+    const name = normalizeClinicStudentText(req.query.name);
+    const limit = Math.min(
+      Math.max(Number.parseInt(String(req.query.limit || '500'), 10) || 500, 1),
+      1000,
+    );
+
+    if (className) addFilter('class_name ILIKE ?', `%${className}%`);
+    if (grade) addFilter('grade = ?', grade);
+    if (phone) addFilter('phone LIKE ?', `%${phone}%`);
+    if (name) addFilter('student_name ILIKE ?', `%${name}%`);
+
+    if (status === 'perfect') {
+      filters.push('dictation_required = FALSE');
+    } else if (status === 'pending') {
+      filters.push('dictation_required = TRUE AND dictation_submitted = FALSE');
+    } else if (status === 'submitted') {
+      filters.push('dictation_required = TRUE AND dictation_submitted = TRUE');
+    } else if (status && status !== 'all') {
+      return jsonError(res, 400, '?? ??? ???? ????.');
+    }
+
+    values.push(limit);
+    const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const { rows } = await pool.query(
+      `SELECT id, phone, student_name, class_name, grade, day_number,
+              total_count, correct_count, wrong_answers,
+              dictation_required, dictation_submitted, submitted_at,
+              dictation_image_url, dictation_image_name,
+              created_at, updated_at
+         FROM clinic_dictation_attempts
+        ${whereClause}
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT $${values.length}`,
+      values
+    );
+
+    res.json({
+      ok: true,
+      attempts: rows.map(clinicDictationAttemptPublic),
+      count: rows.length,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/clinic-dictation/attempts', async (req, res, next) => {
+  try {
+    const phone = normalizeClinicPhone(req.body.phone);
+    const studentName = normalizeClinicStudentText(req.body.name || req.body.studentName);
+    const className = normalizeClinicStudentText(req.body.className || '미정');
+    const grade = normalizeClinicListeningGrade(req.body.grade);
+    const dayNumber = normalizeClinicListeningDayNumber(req.body.dayNumber || req.body.day);
+    const totalCount = normalizePositiveInteger(req.body.totalCount, 1, 300);
+    const correctCount = normalizePositiveInteger(req.body.correctCount, 0, 300);
+    const wrongAnswers = normalizeWrongAnswerNumbers(req.body.wrongAnswers);
+
+    if (!phone) {
+      return jsonError(res, 400, '학생 연락처가 필요합니다.');
+    }
+    if (!grade) {
+      return jsonError(res, 400, '지원하지 않는 학년/부서입니다.');
+    }
+    if (!dayNumber) {
+      return jsonError(res, 400, 'Day 정보가 올바르지 않습니다.');
+    }
+    if (!totalCount || correctCount > totalCount) {
+      return jsonError(res, 400, '점수 정보가 올바르지 않습니다.');
+    }
+
+    const dictationRequired = correctCount < totalCount;
+    const { rows } = await pool.query(
+      `INSERT INTO clinic_dictation_attempts (
+         phone, student_name, class_name, grade, day_number,
+         total_count, correct_count, wrong_answers,
+         dictation_required, dictation_submitted, submitted_at,
+         dictation_image_url, dictation_image_name, created_at, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE, NULL, '', '', NOW(), NOW())
+       ON CONFLICT (phone, grade, day_number)
+       DO UPDATE SET student_name = EXCLUDED.student_name,
+                     class_name = EXCLUDED.class_name,
+                     total_count = EXCLUDED.total_count,
+                     correct_count = EXCLUDED.correct_count,
+                     wrong_answers = EXCLUDED.wrong_answers,
+                     dictation_required = EXCLUDED.dictation_required,
+                     dictation_submitted = FALSE,
+                     submitted_at = NULL,
+                     dictation_image_url = '',
+                     dictation_image_name = '',
+                     updated_at = NOW()
+       RETURNING id, phone, student_name, class_name, grade, day_number,
+                 total_count, correct_count, wrong_answers,
+                 dictation_required, dictation_submitted, submitted_at,
+                 dictation_image_url, dictation_image_name,
+                 created_at, updated_at`,
+      [
+        phone,
+        studentName,
+        className || '미정',
+        grade,
+        dayNumber,
+        totalCount,
+        correctCount,
+        wrongAnswers,
+        dictationRequired,
+      ]
+    );
+
+    res.json({ ok: true, attempt: clinicDictationAttemptPublic(rows[0]) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/clinic-dictation/:id/submission', async (req, res, next) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const phone = normalizeClinicPhone(req.body.phone);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      return jsonError(res, 400, '제출 대상 정보가 올바르지 않습니다.');
+    }
+    if (!phone) {
+      return jsonError(res, 400, '학생 연락처가 필요합니다.');
+    }
+
+    const existing = await pool.query(
+      `SELECT id, phone, dictation_required, dictation_submitted
+         FROM clinic_dictation_attempts
+        WHERE id = $1
+        LIMIT 1`,
+      [id]
+    );
+    const attempt = existing.rows[0];
+    if (!attempt) {
+      return jsonError(res, 404, '제출 대상 기록을 찾을 수 없습니다.');
+    }
+    if (attempt.phone !== phone) {
+      return jsonError(res, 403, '해당 학생의 딕테이션 과제만 제출할 수 있습니다.');
+    }
+    if (!attempt.dictation_required) {
+      return jsonError(res, 400, '만점 회차는 딕테이션 제출 대상이 아닙니다.');
+    }
+    if (attempt.dictation_submitted) {
+      const { rows } = await pool.query(
+        `SELECT id, phone, student_name, class_name, grade, day_number,
+                total_count, correct_count, wrong_answers,
+                dictation_required, dictation_submitted, submitted_at,
+                dictation_image_url, dictation_image_name,
+                created_at, updated_at
+           FROM clinic_dictation_attempts
+          WHERE id = $1`,
+        [id]
+      );
+      return res.json({ ok: true, attempt: clinicDictationAttemptPublic(rows[0]) });
+    }
+
+    let uploaded;
+    try {
+      uploaded = await saveClinicDictationUpload(req, req.body.file);
+    } catch (error) {
+      if (error.message === 'DICTATION_FILE_TOO_LARGE') {
+        return jsonError(res, 400, '사진은 8MB 이하로 업로드해주세요.');
+      }
+      return jsonError(res, 400, '사진 파일 형식이 올바르지 않습니다.');
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE clinic_dictation_attempts
+          SET dictation_submitted = TRUE,
+              submitted_at = NOW(),
+              dictation_image_url = $2,
+              dictation_image_name = $3,
+              updated_at = NOW()
+        WHERE id = $1
+        RETURNING id, phone, student_name, class_name, grade, day_number,
+                  total_count, correct_count, wrong_answers,
+                  dictation_required, dictation_submitted, submitted_at,
+                  dictation_image_url, dictation_image_name,
+                  created_at, updated_at`,
+      [id, uploaded.url, uploaded.name]
+    );
+
+    res.json({ ok: true, attempt: clinicDictationAttemptPublic(rows[0]) });
   } catch (error) {
     next(error);
   }
