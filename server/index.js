@@ -213,7 +213,12 @@ app.use('/api/supply-requests', express.json({ limit: '64kb' }));
 app.use('/api/vocabulary-workbook', (req, res, next) => {
   const origin = String(req.headers.origin || '');
   const originRoot = origin.replace(/:\d+$/, '');
-  if (TODO_ALLOWED_ORIGINS.has(origin) || TODO_ALLOWED_ORIGINS.has(originRoot)) {
+  if (
+    TODO_ALLOWED_ORIGINS.has(origin) ||
+    TODO_ALLOWED_ORIGINS.has(originRoot) ||
+    DASHBOARD_ALLOWED_ORIGINS.has(origin) ||
+    DASHBOARD_ALLOWED_ORIGINS.has(originRoot)
+  ) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
