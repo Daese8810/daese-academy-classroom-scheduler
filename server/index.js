@@ -254,10 +254,52 @@ function normalizeSupplyRequestList(value, allowedValues) {
   const allowed = new Set(allowedValues);
   const result = [];
   for (const item of value) {
-    const text = sanitizeSupplyRequestText(item, 80);
-    if (allowed.has(text) && !result.includes(text)) {
-      result.push(text);
+    const text = normalizeSupplyRequestItemName(item);
+    const expanded = text === '분필 / 분필 홀더'
+      ? ['분필', '분필 홀더']
+      : text === '가위 / 칼'
+        ? ['가위', '칼']
+        : [text];
+    for (const entry of expanded) {
+      if (allowed.has(entry) && !result.includes(entry)) {
+        result.push(entry);
+      }
     }
+  }
+  return result;
+}
+
+function normalizeSupplyRequestItemName(value) {
+  const text = sanitizeSupplyRequestText(value, 80);
+  if (text === '종이') return '복사 용지';
+  return text;
+}
+
+function normalizeSupplyRequestItemDetails(value, allowedItems, allowedPaperSizes) {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set(allowedItems);
+  const allowedSizes = new Set(allowedPaperSizes);
+  const result = [];
+  const seen = new Set();
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') continue;
+    const rawName = sanitizeSupplyRequestText(raw.name, 120);
+    let name = normalizeSupplyRequestItemName(rawName);
+    const paperPrefix = '복사 용지 ';
+    if (name.startsWith(paperPrefix)) {
+      const size = name.slice(paperPrefix.length).trim();
+      if (!allowedSizes.has(size)) continue;
+      name = `${paperPrefix}${size}`;
+    } else if (!allowed.has(name)) {
+      continue;
+    }
+    if (seen.has(name)) continue;
+    seen.add(name);
+    result.push({
+      name,
+      quantity: sanitizeSupplyRequestText(raw.quantity, 80),
+      productLink: sanitizeSupplyRequestText(raw.productLink, 1000),
+    });
   }
   return result;
 }
@@ -275,15 +317,37 @@ function supplyRequestKstLabel() {
 }
 
 function buildSupplyRequestMessage(payload) {
-  const items = payload.items.map((item) => {
-    if (item === '종이' && payload.paperSizes.length > 0) {
-      return `- 종이: ${payload.paperSizes.join(', ')}`;
+  const itemDetails = Array.isArray(payload.itemDetails)
+    ? payload.itemDetails
+    : [];
+  const items = itemDetails.length > 0
+    ? itemDetails.map((item) => {
+        const parts = [`- ${item.name}`];
+        parts.push(`개수: ${item.quantity || '미입력'}`);
+        if (item.productLink) {
+          parts.push(`링크: ${item.productLink}`);
+        }
+        return parts.join(' / ');
+      })
+    : payload.items.map((item) => {
+    if (item === '복사 용지' && payload.paperSizes.length > 0) {
+      return `- 복사 용지: ${payload.paperSizes.join(', ')}`;
     }
     if (item === '기타' && payload.otherText) {
       return `- 기타: ${payload.otherText}`;
     }
     return `- ${item}`;
   });
+  const extraLines = itemDetails.length > 0 && payload.otherText
+    ? ['', `기타 내용: ${payload.otherText}`]
+    : [];
+  const legacyDetailLines = itemDetails.length === 0
+    ? [
+        '',
+        `상품 링크: ${payload.productLink || '미입력'}`,
+        `개수: ${payload.quantity || '미입력'}`,
+      ]
+    : [];
 
   return [
     '[비품 요청]',
@@ -292,9 +356,8 @@ function buildSupplyRequestMessage(payload) {
     '',
     '요청 품목',
     ...items,
-    '',
-    `상품 링크: ${payload.productLink || '미입력'}`,
-    `개수: ${payload.quantity || '미입력'}`,
+    ...extraLines,
+    ...legacyDetailLines,
   ].join('\n');
 }
 
@@ -1757,12 +1820,14 @@ app.put('/api/dashboard-storage/:key', async (req, res, next) => {
 app.post('/api/supply-requests', async (req, res, next) => {
   try {
     const allowedItems = [
-      '종이',
+      '복사 용지',
       '포스트잇',
       '스테이플러심',
-      '분필 / 분필 홀더',
+      '분필',
+      '분필 홀더',
       '채점용 색연필',
-      '가위 / 칼',
+      '가위',
+      '칼',
       '강의실 방향제',
       '기타',
     ];
@@ -1770,6 +1835,11 @@ app.post('/api/supply-requests', async (req, res, next) => {
     const requester = sanitizeSupplyRequestText(req.body.requester, 80);
     const items = normalizeSupplyRequestList(req.body.items, allowedItems);
     const paperSizes = normalizeSupplyRequestList(req.body.paperSizes, allowedPaperSizes);
+    const itemDetails = normalizeSupplyRequestItemDetails(
+      req.body.itemDetails,
+      allowedItems,
+      allowedPaperSizes
+    );
     const otherText = sanitizeSupplyRequestText(req.body.otherText, 300);
     const productLink = sanitizeSupplyRequestText(req.body.productLink, 1000);
     const quantity = sanitizeSupplyRequestText(req.body.quantity, 80);
@@ -1777,8 +1847,9 @@ app.post('/api/supply-requests', async (req, res, next) => {
     if (items.length === 0) {
       return jsonError(res, 400, '요청할 비품을 하나 이상 선택해주세요.');
     }
-    if (items.includes('종이') && paperSizes.length === 0) {
-      return jsonError(res, 400, '종이 규격을 선택해주세요.');
+    if (items.includes('복사 용지') && paperSizes.length === 0 &&
+        !itemDetails.some((item) => item.name.startsWith('복사 용지 '))) {
+      return jsonError(res, 400, '복사 용지 규격을 선택해주세요.');
     }
     if (items.includes('기타') && !otherText) {
       return jsonError(res, 400, '기타 요청 내용을 입력해주세요.');
@@ -1788,6 +1859,7 @@ app.post('/api/supply-requests', async (req, res, next) => {
       requester,
       items,
       paperSizes,
+      itemDetails,
       otherText,
       productLink,
       quantity,
