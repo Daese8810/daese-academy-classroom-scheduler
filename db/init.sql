@@ -135,6 +135,40 @@ ALTER TABLE clinic_listening_materials
 CREATE INDEX IF NOT EXISTS idx_clinic_listening_materials_grade_day
   ON clinic_listening_materials (grade, day_number);
 
+CREATE TABLE IF NOT EXISTS clinic_listening_books (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  grade TEXT NOT NULL,
+  title TEXT NOT NULL,
+  textbook_file_name TEXT NOT NULL DEFAULT '',
+  textbook_file_link TEXT NOT NULL DEFAULT '',
+  explanation_file_name TEXT NOT NULL DEFAULT '',
+  explanation_file_link TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (grade, title)
+);
+
+CREATE TABLE IF NOT EXISTS clinic_listening_book_days (
+  book_id UUID NOT NULL REFERENCES clinic_listening_books(id) ON DELETE CASCADE,
+  day_number INTEGER NOT NULL CHECK (day_number BETWEEN 1 AND 60),
+  answers TEXT NOT NULL DEFAULT '',
+  audio_file_name TEXT NOT NULL DEFAULT '',
+  audio_link TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (book_id, day_number)
+);
+
+ALTER TABLE clinic_listening_book_days
+  DROP CONSTRAINT IF EXISTS clinic_listening_book_days_day_number_check;
+ALTER TABLE clinic_listening_book_days
+  ADD CONSTRAINT clinic_listening_book_days_day_number_check
+  CHECK (day_number BETWEEN 1 AND 60);
+
+CREATE INDEX IF NOT EXISTS idx_clinic_listening_books_grade_title
+  ON clinic_listening_books (grade, title);
+CREATE INDEX IF NOT EXISTS idx_clinic_listening_book_days_book_day
+  ON clinic_listening_book_days (book_id, day_number);
+
 CREATE TABLE IF NOT EXISTS dashboard_storage (
   storage_key TEXT PRIMARY KEY,
   json_text TEXT NOT NULL DEFAULT '{}',

@@ -70,6 +70,7 @@ const CLINIC_LISTENING_GRADES = ['초등부', '중1', '중2', '중3', '고1', '�
 const CLINIC_LISTENING_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_LISTENING_UPLOAD_MAX_BYTES || 50 * 1024 * 1024);
 const UPLOAD_ROOT = process.env.UPLOAD_ROOT || path.join(__dirname, '..', 'uploads');
 const CLINIC_LISTENING_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening');
+const CLINIC_LISTENING_BOOK_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening-books');
 const TODO_ALLOWED_ORIGINS = new Set([
   'https://daeseenglish.com',
   'https://www.daeseenglish.com',
@@ -737,13 +738,34 @@ function clinicListeningMaterialPublic(row) {
   };
 }
 
+function clinicListeningBookPublic(row, days = []) {
+  return {
+    id: row.id,
+    grade: row.grade,
+    title: row.title || '',
+    textbookFileName: row.textbook_file_name || '',
+    textbookFileLink: row.textbook_file_link || '',
+    explanationFileName: row.explanation_file_name || '',
+    explanationFileLink: row.explanation_file_link || '',
+    updatedAt: row.updated_at || null,
+    days: days.map((day) => ({
+      day: `Day ${day.day_number}`,
+      dayNumber: Number(day.day_number || 0),
+      answers: day.answers || '',
+      link: day.audio_link || '',
+      audioFileName: day.audio_file_name || '',
+      updatedAt: day.updated_at || null,
+    })),
+  };
+}
+
 function sanitizeUploadFileName(name) {
   const raw = String(name || 'clinic-listening-file').trim();
   const ext = path.extname(raw).toLowerCase().replace(/[^a-z0-9.]/g, '').slice(0, 12);
   return `${Date.now()}-${crypto.randomUUID()}${ext || '.bin'}`;
 }
 
-async function saveClinicListeningUpload(req, rawFile, grade, dayNumber) {
+async function saveClinicListeningNamedUpload(req, rawFile, uploadDir, fallbackName) {
   if (!rawFile || typeof rawFile !== 'object') return '';
   const dataUrl = String(rawFile.dataUrl || '').trim();
   const match = /^data:([^;,]+)?;base64,(.+)$/s.exec(dataUrl);
@@ -760,10 +782,25 @@ async function saveClinicListeningUpload(req, rawFile, grade, dayNumber) {
     throw new Error('CLINIC_LISTENING_FILE_TOO_LARGE');
   }
 
-  await fs.promises.mkdir(CLINIC_LISTENING_UPLOAD_DIR, { recursive: true });
-  const safeName = sanitizeUploadFileName(rawFile.name || `clinic-listening-${grade}-day-${dayNumber}`);
-  await fs.promises.writeFile(path.join(CLINIC_LISTENING_UPLOAD_DIR, safeName), buffer, { flag: 'wx' });
-  return `${publicBaseUrl(req)}/uploads/clinic-listening/${encodeURIComponent(safeName)}`;
+  await fs.promises.mkdir(uploadDir, { recursive: true });
+  const safeName = sanitizeUploadFileName(rawFile.name || fallbackName);
+  await fs.promises.writeFile(path.join(uploadDir, safeName), buffer, { flag: 'wx' });
+  const folder = path.basename(uploadDir);
+  return {
+    name: String(rawFile.name || safeName).trim(),
+    link: `${publicBaseUrl(req)}/uploads/${folder}/${encodeURIComponent(safeName)}`,
+    size: buffer.length,
+  };
+}
+
+async function saveClinicListeningUpload(req, rawFile, grade, dayNumber) {
+  const saved = await saveClinicListeningNamedUpload(
+    req,
+    rawFile,
+    CLINIC_LISTENING_UPLOAD_DIR,
+    `clinic-listening-${grade}-day-${dayNumber}`,
+  );
+  return saved ? saved.link : '';
 }
 
 async function fetchClinicListeningGasJson(params) {
@@ -1165,6 +1202,40 @@ async function ensureClinicListeningMaterialTables() {
 
     CREATE INDEX IF NOT EXISTS idx_clinic_listening_materials_grade_day
       ON clinic_listening_materials (grade, day_number);
+
+    CREATE TABLE IF NOT EXISTS clinic_listening_books (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      grade TEXT NOT NULL,
+      title TEXT NOT NULL,
+      textbook_file_name TEXT NOT NULL DEFAULT '',
+      textbook_file_link TEXT NOT NULL DEFAULT '',
+      explanation_file_name TEXT NOT NULL DEFAULT '',
+      explanation_file_link TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (grade, title)
+    );
+
+    CREATE TABLE IF NOT EXISTS clinic_listening_book_days (
+      book_id UUID NOT NULL REFERENCES clinic_listening_books(id) ON DELETE CASCADE,
+      day_number INTEGER NOT NULL CHECK (day_number BETWEEN 1 AND 60),
+      answers TEXT NOT NULL DEFAULT '',
+      audio_file_name TEXT NOT NULL DEFAULT '',
+      audio_link TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (book_id, day_number)
+    );
+
+    ALTER TABLE clinic_listening_book_days
+      DROP CONSTRAINT IF EXISTS clinic_listening_book_days_day_number_check;
+    ALTER TABLE clinic_listening_book_days
+      ADD CONSTRAINT clinic_listening_book_days_day_number_check
+      CHECK (day_number BETWEEN 1 AND 60);
+
+    CREATE INDEX IF NOT EXISTS idx_clinic_listening_books_grade_title
+      ON clinic_listening_books (grade, title);
+    CREATE INDEX IF NOT EXISTS idx_clinic_listening_book_days_book_day
+      ON clinic_listening_book_days (book_id, day_number);
   `);
 }
 
@@ -1730,6 +1801,227 @@ app.post('/api/supply-requests', async (req, res, next) => {
   } catch (error) {
     if (error && error.message === 'KAKAOWORK_BOT_APP_KEY_MISSING') {
       return jsonError(res, 500, '카카오워크 봇 앱키가 서버에 설정되어 있지 않습니다.');
+    }
+    next(error);
+  }
+});
+
+app.get('/api/clinic-listening-books', async (req, res, next) => {
+  try {
+    const grade = normalizeClinicListeningGrade(req.query.grade);
+    if (!grade) {
+      return jsonError(res, 400, '지원하지 않는 학년/부서입니다.');
+    }
+
+    const booksRes = await pool.query(
+      `SELECT id::text, grade, title,
+              textbook_file_name, textbook_file_link,
+              explanation_file_name, explanation_file_link,
+              created_at, updated_at
+         FROM clinic_listening_books
+        WHERE grade = $1
+        ORDER BY updated_at DESC, title ASC`,
+      [grade]
+    );
+    const bookIds = booksRes.rows.map((row) => row.id);
+    let daysByBook = new Map();
+    if (bookIds.length > 0) {
+      const daysRes = await pool.query(
+        `SELECT book_id::text, day_number, answers, audio_file_name, audio_link, updated_at
+           FROM clinic_listening_book_days
+          WHERE book_id = ANY($1::uuid[])
+          ORDER BY day_number ASC`,
+        [bookIds]
+      );
+      for (const day of daysRes.rows) {
+        const list = daysByBook.get(day.book_id) || [];
+        list.push(day);
+        daysByBook.set(day.book_id, list);
+      }
+    }
+
+    res.json({
+      ok: true,
+      books: booksRes.rows.map((book) => clinicListeningBookPublic(book, daysByBook.get(book.id) || [])),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/clinic-listening-books', async (req, res, next) => {
+  try {
+    const grade = normalizeClinicListeningGrade(req.body.grade);
+    const title = String(req.body.title || '').trim().slice(0, 200);
+    if (!grade) {
+      return jsonError(res, 400, '지원하지 않는 학년/부서입니다.');
+    }
+    if (!title) {
+      return jsonError(res, 400, '듣기 책 이름을 입력해주세요.');
+    }
+
+    const existingId = String(req.body.id || '').trim();
+    let textbookFileName = String(req.body.textbookFileName || '').trim().slice(0, 300);
+    let textbookFileLink = String(req.body.textbookFileLink || '').trim().slice(0, 1000);
+    let explanationFileName = String(req.body.explanationFileName || '').trim().slice(0, 300);
+    let explanationFileLink = String(req.body.explanationFileLink || '').trim().slice(0, 1000);
+
+    try {
+      const textbookUpload = await saveClinicListeningNamedUpload(
+        req,
+        req.body.textbookFile,
+        CLINIC_LISTENING_BOOK_UPLOAD_DIR,
+        `clinic-listening-book-${grade}`,
+      );
+      if (textbookUpload) {
+        textbookFileName = textbookUpload.name;
+        textbookFileLink = textbookUpload.link;
+      }
+
+      const explanationUpload = await saveClinicListeningNamedUpload(
+        req,
+        req.body.explanationFile,
+        CLINIC_LISTENING_BOOK_UPLOAD_DIR,
+        `clinic-listening-explanation-${grade}`,
+      );
+      if (explanationUpload) {
+        explanationFileName = explanationUpload.name;
+        explanationFileLink = explanationUpload.link;
+      }
+    } catch (error) {
+      if (error.message === 'CLINIC_LISTENING_FILE_TOO_LARGE') {
+        return jsonError(res, 400, '교재 파일은 50MB 이하로 업로드해주세요.');
+      }
+      return jsonError(res, 400, '교재 파일 형식이 올바르지 않습니다.');
+    }
+
+    let bookRows;
+    if (existingId) {
+      bookRows = await pool.query(
+        `UPDATE clinic_listening_books
+            SET grade = $2,
+                title = $3,
+                textbook_file_name = $4,
+                textbook_file_link = $5,
+                explanation_file_name = $6,
+                explanation_file_link = $7,
+                updated_at = NOW()
+          WHERE id = $1::uuid
+          RETURNING id::text, grade, title,
+                    textbook_file_name, textbook_file_link,
+                    explanation_file_name, explanation_file_link,
+                    created_at, updated_at`,
+        [
+          existingId,
+          grade,
+          title,
+          textbookFileName,
+          textbookFileLink,
+          explanationFileName,
+          explanationFileLink,
+        ]
+      );
+    }
+
+    if (!existingId || bookRows.rowCount === 0) {
+      bookRows = await pool.query(
+        `INSERT INTO clinic_listening_books (
+            grade, title,
+            textbook_file_name, textbook_file_link,
+            explanation_file_name, explanation_file_link,
+            updated_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())
+         ON CONFLICT (grade, title)
+         DO UPDATE SET textbook_file_name = EXCLUDED.textbook_file_name,
+                       textbook_file_link = EXCLUDED.textbook_file_link,
+                       explanation_file_name = EXCLUDED.explanation_file_name,
+                       explanation_file_link = EXCLUDED.explanation_file_link,
+                       updated_at = NOW()
+         RETURNING id::text, grade, title,
+                   textbook_file_name, textbook_file_link,
+                   explanation_file_name, explanation_file_link,
+                   created_at, updated_at`,
+        [
+          grade,
+          title,
+          textbookFileName,
+          textbookFileLink,
+          explanationFileName,
+          explanationFileLink,
+        ]
+      );
+    }
+
+    const book = bookRows.rows[0];
+    const rawDays = Array.isArray(req.body.days) ? req.body.days : [];
+    for (const rawDay of rawDays) {
+      const dayNumber = normalizeClinicListeningDayNumber(rawDay && (rawDay.dayNumber || rawDay.day));
+      if (!dayNumber) continue;
+
+      const answers = normalizeClinicListeningAnswers(rawDay.answers);
+      let audioLink = String(rawDay.link || rawDay.audioLink || '').trim().slice(0, 1000);
+      let audioFileName = String(rawDay.audioFileName || '').trim().slice(0, 300);
+      try {
+        const audioUpload = await saveClinicListeningNamedUpload(
+          req,
+          rawDay.file || rawDay.audioFile,
+          CLINIC_LISTENING_BOOK_UPLOAD_DIR,
+          `clinic-listening-book-${grade}-day-${dayNumber}`,
+        );
+        if (audioUpload) {
+          audioFileName = audioUpload.name;
+          audioLink = audioUpload.link;
+        }
+      } catch (error) {
+        if (error.message === 'CLINIC_LISTENING_FILE_TOO_LARGE') {
+          return jsonError(res, 400, '회차별 음성 파일은 50MB 이하로 업로드해주세요.');
+        }
+        return jsonError(res, 400, '회차별 음성 파일 형식이 올바르지 않습니다.');
+      }
+
+      if (!answers && !audioLink && !audioFileName) {
+        await pool.query(
+          `DELETE FROM clinic_listening_book_days
+            WHERE book_id = $1::uuid AND day_number = $2`,
+          [book.id, dayNumber]
+        );
+        continue;
+      }
+
+      await pool.query(
+        `INSERT INTO clinic_listening_book_days (
+            book_id, day_number, answers, audio_file_name, audio_link, updated_at
+         )
+         VALUES ($1::uuid, $2, $3, $4, $5, NOW())
+         ON CONFLICT (book_id, day_number)
+         DO UPDATE SET answers = EXCLUDED.answers,
+                       audio_file_name = EXCLUDED.audio_file_name,
+                       audio_link = EXCLUDED.audio_link,
+                       updated_at = NOW()`,
+        [book.id, dayNumber, answers, audioFileName, audioLink]
+      );
+    }
+
+    const daysRes = await pool.query(
+      `SELECT book_id::text, day_number, answers, audio_file_name, audio_link, updated_at
+         FROM clinic_listening_book_days
+        WHERE book_id = $1::uuid
+        ORDER BY day_number ASC`,
+      [book.id]
+    );
+
+    res.json({
+      ok: true,
+      action: 'saveListeningBook',
+      book: clinicListeningBookPublic(book, daysRes.rows),
+    });
+  } catch (error) {
+    if (error && error.code === '23505') {
+      return jsonError(res, 400, '같은 학년에 같은 이름의 듣기 교재가 이미 있습니다.');
+    }
+    if (error && error.code === '22P02') {
+      return jsonError(res, 400, '교재 ID가 올바르지 않습니다.');
     }
     next(error);
   }
