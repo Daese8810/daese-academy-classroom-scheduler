@@ -71,6 +71,7 @@ const CLINIC_LISTENING_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_LISTENING_UP
 const UPLOAD_ROOT = process.env.UPLOAD_ROOT || path.join(__dirname, '..', 'uploads');
 const CLINIC_LISTENING_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening');
 const CLINIC_LISTENING_BOOK_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening-books');
+const CLINIC_LISTENING_BOOK_COMMON_GRADE = '공용';
 const TODO_ALLOWED_ORIGINS = new Set([
   'https://daeseenglish.com',
   'https://www.daeseenglish.com',
@@ -1893,20 +1894,13 @@ app.post('/api/supply-requests', async (req, res, next) => {
 
 app.get('/api/clinic-listening-books', async (req, res, next) => {
   try {
-    const grade = normalizeClinicListeningGrade(req.query.grade);
-    if (!grade) {
-      return jsonError(res, 400, '지원하지 않는 학년/부서입니다.');
-    }
-
     const booksRes = await pool.query(
       `SELECT id::text, grade, title,
               textbook_file_name, textbook_file_link,
               explanation_file_name, explanation_file_link,
               created_at, updated_at
          FROM clinic_listening_books
-        WHERE grade = $1
-        ORDER BY updated_at DESC, title ASC`,
-      [grade]
+        ORDER BY LOWER(title) ASC, updated_at DESC`
     );
     const bookIds = booksRes.rows.map((row) => row.id);
     let daysByBook = new Map();
@@ -1936,16 +1930,37 @@ app.get('/api/clinic-listening-books', async (req, res, next) => {
 
 app.post('/api/clinic-listening-books', async (req, res, next) => {
   try {
-    const grade = normalizeClinicListeningGrade(req.body.grade);
+    const requestGrade = normalizeClinicListeningGrade(req.body.grade);
     const title = String(req.body.title || '').trim().slice(0, 200);
-    if (!grade) {
-      return jsonError(res, 400, '지원하지 않는 학년/부서입니다.');
-    }
     if (!title) {
       return jsonError(res, 400, '듣기 책 이름을 입력해주세요.');
     }
 
     const existingId = String(req.body.id || '').trim();
+    const existingBookRes = existingId
+      ? await pool.query(
+          `SELECT id::text, grade
+             FROM clinic_listening_books
+            WHERE id = $1::uuid`,
+          [existingId]
+        )
+      : { rows: [] };
+    const sameTitleRes = existingId
+      ? { rows: [] }
+      : await pool.query(
+          `SELECT id::text, grade
+             FROM clinic_listening_books
+            WHERE title = $1
+            ORDER BY CASE WHEN grade = $2 THEN 0 ELSE 1 END, updated_at DESC
+            LIMIT 1`,
+          [title, CLINIC_LISTENING_BOOK_COMMON_GRADE]
+        );
+    const targetId = existingBookRes.rows[0]?.id || sameTitleRes.rows[0]?.id || '';
+    const bookGrade =
+      existingBookRes.rows[0]?.grade ||
+      sameTitleRes.rows[0]?.grade ||
+      CLINIC_LISTENING_BOOK_COMMON_GRADE;
+    const uploadGrade = requestGrade || bookGrade || 'common';
     let textbookFileName = String(req.body.textbookFileName || '').trim().slice(0, 300);
     let textbookFileLink = String(req.body.textbookFileLink || '').trim().slice(0, 1000);
     let explanationFileName = String(req.body.explanationFileName || '').trim().slice(0, 300);
@@ -1956,7 +1971,7 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
         req,
         req.body.textbookFile,
         CLINIC_LISTENING_BOOK_UPLOAD_DIR,
-        `clinic-listening-book-${grade}`,
+        `clinic-listening-book-${uploadGrade}`,
       );
       if (textbookUpload) {
         textbookFileName = textbookUpload.name;
@@ -1967,7 +1982,7 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
         req,
         req.body.explanationFile,
         CLINIC_LISTENING_BOOK_UPLOAD_DIR,
-        `clinic-listening-explanation-${grade}`,
+        `clinic-listening-explanation-${uploadGrade}`,
       );
       if (explanationUpload) {
         explanationFileName = explanationUpload.name;
@@ -1981,7 +1996,7 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
     }
 
     let bookRows;
-    if (existingId) {
+    if (targetId) {
       bookRows = await pool.query(
         `UPDATE clinic_listening_books
             SET grade = $2,
@@ -1997,8 +2012,8 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
                     explanation_file_name, explanation_file_link,
                     created_at, updated_at`,
         [
-          existingId,
-          grade,
+          targetId,
+          bookGrade,
           title,
           textbookFileName,
           textbookFileLink,
@@ -2008,7 +2023,7 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
       );
     }
 
-    if (!existingId || bookRows.rowCount === 0) {
+    if (!targetId || bookRows.rowCount === 0) {
       bookRows = await pool.query(
         `INSERT INTO clinic_listening_books (
             grade, title,
@@ -2028,7 +2043,7 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
                    explanation_file_name, explanation_file_link,
                    created_at, updated_at`,
         [
-          grade,
+          bookGrade,
           title,
           textbookFileName,
           textbookFileLink,
@@ -2052,7 +2067,7 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
           req,
           rawDay.file || rawDay.audioFile,
           CLINIC_LISTENING_BOOK_UPLOAD_DIR,
-          `clinic-listening-book-${grade}-day-${dayNumber}`,
+          `clinic-listening-book-${uploadGrade}-day-${dayNumber}`,
         );
         if (audioUpload) {
           audioFileName = audioUpload.name;
