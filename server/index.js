@@ -9,6 +9,8 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const APP_URL = process.env.APP_URL || '';
 const COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'daese_session';
 const SESSION_DAYS = Number(process.env.SESSION_DAYS || 14);
+const KAKAOWORK_BOT_APP_KEY = process.env.KAKAOWORK_BOT_APP_KEY || '';
+const KAKAOWORK_SUPPLY_REQUEST_EMAIL = process.env.KAKAOWORK_SUPPLY_REQUEST_EMAIL || 'ltdall@naver.com';
 const SLOT_START = 9 * 60;
 const SLOT_END = 22 * 60;
 const SLOT_MINUTES = 30;
@@ -161,6 +163,19 @@ app.use('/api/dashboard-storage', (req, res, next) => {
   next();
 });
 app.use('/api/dashboard-storage', express.json({ limit: '20mb' }));
+app.use('/api/supply-requests', (req, res, next) => {
+  const origin = String(req.headers.origin || '');
+  const originRoot = origin.replace(/:\d+$/, '');
+  if (TODO_ALLOWED_ORIGINS.has(origin) || TODO_ALLOWED_ORIGINS.has(originRoot)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+app.use('/api/supply-requests', express.json({ limit: '64kb' }));
 app.use('/uploads', express.static(UPLOAD_ROOT, {
   etag: true,
   maxAge: '7d',
@@ -227,6 +242,96 @@ function verifyPassword(password, stored) {
 
 function jsonError(res, status, message, extra = {}) {
   res.status(status).json({ ok: false, message, ...extra });
+}
+
+function sanitizeSupplyRequestText(value, maxLength = 500) {
+  return String(value || '').trim().slice(0, maxLength);
+}
+
+function normalizeSupplyRequestList(value, allowedValues) {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set(allowedValues);
+  const result = [];
+  for (const item of value) {
+    const text = sanitizeSupplyRequestText(item, 80);
+    if (allowed.has(text) && !result.includes(text)) {
+      result.push(text);
+    }
+  }
+  return result;
+}
+
+function supplyRequestKstLabel() {
+  return new Intl.DateTimeFormat('ko-KR', {
+    timeZone: SEOUL_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date());
+}
+
+function buildSupplyRequestMessage(payload) {
+  const items = payload.items.map((item) => {
+    if (item === '종이' && payload.paperSizes.length > 0) {
+      return `- 종이: ${payload.paperSizes.join(', ')}`;
+    }
+    if (item === '기타' && payload.otherText) {
+      return `- 기타: ${payload.otherText}`;
+    }
+    return `- ${item}`;
+  });
+
+  return [
+    '[비품 요청]',
+    `요청자: ${payload.requester || '미입력'}`,
+    `요청 시각: ${supplyRequestKstLabel()}`,
+    '',
+    '요청 품목',
+    ...items,
+    '',
+    `상품 링크: ${payload.productLink || '미입력'}`,
+    `개수: ${payload.quantity || '미입력'}`,
+  ].join('\n');
+}
+
+async function sendKakaoWorkMessageByEmail({ email, text }) {
+  if (!KAKAOWORK_BOT_APP_KEY) {
+    throw new Error('KAKAOWORK_BOT_APP_KEY_MISSING');
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(KAKAOWORK_MESSAGES_SEND_BY_EMAIL_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${KAKAOWORK_BOT_APP_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, text }),
+      signal: controller.signal,
+    });
+    const responseText = await response.text();
+    let data = null;
+    try {
+      data = responseText ? JSON.parse(responseText) : null;
+    } catch (_) {}
+
+    if (!response.ok || (data && data.success === false)) {
+      const message = data && data.error && data.error.message
+        ? data.error.message
+        : responseText || `HTTP ${response.status}`;
+      const error = new Error(message);
+      error.statusCode = response.status;
+      throw error;
+    }
+    return data || { success: true };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function isValidDate(dateStr) {
@@ -1574,6 +1679,58 @@ app.put('/api/dashboard-storage/:key', async (req, res, next) => {
       updatedAt: rows[0]?.updated_at || null,
     });
   } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/supply-requests', async (req, res, next) => {
+  try {
+    const allowedItems = [
+      '종이',
+      '포스트잇',
+      '스테이플러심',
+      '분필 / 분필 홀더',
+      '채점용 색연필',
+      '가위 / 칼',
+      '강의실 방향제',
+      '기타',
+    ];
+    const allowedPaperSizes = ['A4', 'B4', 'A3'];
+    const requester = sanitizeSupplyRequestText(req.body.requester, 80);
+    const items = normalizeSupplyRequestList(req.body.items, allowedItems);
+    const paperSizes = normalizeSupplyRequestList(req.body.paperSizes, allowedPaperSizes);
+    const otherText = sanitizeSupplyRequestText(req.body.otherText, 300);
+    const productLink = sanitizeSupplyRequestText(req.body.productLink, 1000);
+    const quantity = sanitizeSupplyRequestText(req.body.quantity, 80);
+
+    if (items.length === 0) {
+      return jsonError(res, 400, '요청할 비품을 하나 이상 선택해주세요.');
+    }
+    if (items.includes('종이') && paperSizes.length === 0) {
+      return jsonError(res, 400, '종이 규격을 선택해주세요.');
+    }
+    if (items.includes('기타') && !otherText) {
+      return jsonError(res, 400, '기타 요청 내용을 입력해주세요.');
+    }
+
+    const message = buildSupplyRequestMessage({
+      requester,
+      items,
+      paperSizes,
+      otherText,
+      productLink,
+      quantity,
+    });
+
+    await sendKakaoWorkMessageByEmail({
+      email: KAKAOWORK_SUPPLY_REQUEST_EMAIL,
+      text: message,
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    if (error && error.message === 'KAKAOWORK_BOT_APP_KEY_MISSING') {
+      return jsonError(res, 500, '카카오워크 봇 앱키가 서버에 설정되어 있지 않습니다.');
+    }
     next(error);
   }
 });
