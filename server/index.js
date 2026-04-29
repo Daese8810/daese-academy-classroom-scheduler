@@ -67,6 +67,7 @@ const ENGLISH_ROOM_CODES = new Set([
 const CLINIC_LISTENING_GAS_URL = process.env.CLINIC_LISTENING_GAS_URL ||
   'https://script.google.com/macros/s/AKfycbyTm_Plkg1I9GA1tTBbJWiYaFJI2Tuachrbwo_ZpGLQD4JpskyNe0H2KhEG688qMIPLHw/exec';
 const CLINIC_LISTENING_GRADES = ['초등부', '중1', '중2', '중3', '고1', '고2', '초등부 Starter'];
+const CLINIC_LISTENING_SHEET_SYNC_MIN_VERSION = 3;
 const CLINIC_LISTENING_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_LISTENING_UPLOAD_MAX_BYTES || 100 * 1024 * 1024);
 const UPLOAD_ROOT = process.env.UPLOAD_ROOT || path.join(__dirname, '..', 'uploads');
 const CLINIC_LISTENING_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening');
@@ -944,6 +945,160 @@ function postClinicListeningToGas(body) {
   }).catch((error) => {
     console.error('clinic listening GAS sync failed:', error && error.message ? error.message : error);
   });
+}
+
+async function clinicListeningGasSupportsSheetSync() {
+  const decoded = await fetchClinicListeningGasJson({
+    action: 'listeningMaterialsVersion',
+  }).catch(() => null);
+  return !!(
+    decoded &&
+    decoded.ok === true &&
+    decoded.feature === 'clinicListeningMaterials' &&
+    Number(decoded.version || 0) >= CLINIC_LISTENING_SHEET_SYNC_MIN_VERSION
+  );
+}
+
+async function postClinicListeningGradeSnapshotToGas(snapshot) {
+  const grade = normalizeClinicListeningGrade(snapshot && snapshot.grade);
+  if (!grade || !CLINIC_LISTENING_GAS_URL) {
+    return { ok: false, skipped: true, message: 'missing grade or GAS URL' };
+  }
+
+  const title = String((snapshot && snapshot.title) || '').trim();
+  const materials = Array.isArray(snapshot && snapshot.materials)
+    ? snapshot.materials.map((item) => ({
+        day: `Day ${normalizeClinicListeningDayNumber(item && (item.dayNumber || item.day)) || ''}`,
+        answers: normalizeClinicListeningAnswers(item && item.answers),
+        link: String((item && (item.link || item.audioLink)) || '').trim(),
+      })).filter((item) => normalizeClinicListeningDayNumber(item.day))
+    : [];
+
+  if (!(await clinicListeningGasSupportsSheetSync())) {
+    postClinicListeningToGas({
+      action: 'saveListeningBookTitle',
+      grade,
+      title,
+    });
+    for (const material of materials) {
+      if (!material.answers) continue;
+      postClinicListeningToGas({
+        action: 'saveListeningMaterial',
+        grade,
+        day: material.day,
+        answers: material.answers,
+        link: material.link,
+      });
+    }
+    return { ok: false, fallback: true, grade, count: materials.length };
+  }
+
+  const params = new URLSearchParams();
+  params.set('action', 'syncListeningGradeMaterials');
+  params.set('grade', grade);
+  params.set('title', title);
+  params.set('materialsJson', JSON.stringify(materials));
+
+  const response = await fetch(CLINIC_LISTENING_GAS_URL, {
+    method: 'POST',
+    body: params,
+  });
+  const text = await response.text();
+  if (!response.ok || !text || text.trimStart().startsWith('<')) {
+    throw new Error(`GAS sheet sync failed: HTTP ${response.status}`);
+  }
+  const decoded = JSON.parse(text);
+  if (!decoded || decoded.ok !== true) {
+    throw new Error(decoded && decoded.message ? decoded.message : 'GAS sheet sync failed');
+  }
+  return decoded;
+}
+
+async function fetchClinicListeningBookSnapshotByTitle(title) {
+  const cleanTitle = String(title || '').trim();
+  if (!cleanTitle) return null;
+
+  const bookRes = await pool.query(
+    `SELECT id::text, grade, title,
+            textbook_file_name, textbook_file_link,
+            explanation_file_name, explanation_file_link,
+            created_at, updated_at
+       FROM clinic_listening_books
+      WHERE title = $1
+      ORDER BY CASE WHEN grade = $2 THEN 0 ELSE 1 END, updated_at DESC
+      LIMIT 1`,
+    [cleanTitle, CLINIC_LISTENING_BOOK_COMMON_GRADE]
+  );
+  const book = bookRes.rows[0];
+  if (!book) return null;
+
+  const daysRes = await pool.query(
+    `SELECT book_id::text, day_number, answers, audio_file_name, audio_link, updated_at
+       FROM clinic_listening_book_days
+      WHERE book_id = $1::uuid
+      ORDER BY day_number ASC`,
+    [book.id]
+  );
+  return clinicListeningBookPublic(book, daysRes.rows);
+}
+
+async function syncClinicListeningGradeSelectionToGas(grade, title) {
+  const cleanGrade = normalizeClinicListeningGrade(grade);
+  const cleanTitle = String(title || '').trim();
+  if (!cleanGrade) return { ok: false, skipped: true, message: 'missing grade' };
+
+  const book = await fetchClinicListeningBookSnapshotByTitle(cleanTitle);
+  if (!book) {
+    postClinicListeningToGas({
+      action: 'saveListeningBookTitle',
+      grade: cleanGrade,
+      title: cleanTitle,
+    });
+    return { ok: false, fallback: true, grade: cleanGrade, count: 0 };
+  }
+
+  return postClinicListeningGradeSnapshotToGas({
+    grade: cleanGrade,
+    title: cleanTitle,
+    materials: book.days,
+  });
+}
+
+async function syncClinicListeningBookForAssignedGradesToGas(book) {
+  const title = String((book && book.title) || '').trim();
+  if (!title) return [];
+
+  const gradesRes = await pool.query(
+    `SELECT grade
+       FROM clinic_listening_book_titles
+      WHERE title = $1
+      ORDER BY grade ASC`,
+    [title]
+  );
+  const results = [];
+  for (const row of gradesRes.rows) {
+    results.push(await postClinicListeningGradeSnapshotToGas({
+      grade: row.grade,
+      title,
+      materials: book.days || [],
+    }));
+  }
+  return results;
+}
+
+async function syncAllClinicListeningGradeSelectionsToGas() {
+  const titleRes = await pool.query(
+    `SELECT grade, title
+       FROM clinic_listening_book_titles
+      WHERE grade = ANY($1::text[])
+      ORDER BY grade ASC`,
+    [CLINIC_LISTENING_GRADES]
+  );
+  const results = [];
+  for (const row of titleRes.rows) {
+    results.push(await syncClinicListeningGradeSelectionToGas(row.grade, row.title));
+  }
+  return results;
 }
 
 function getClientIp(req) {
@@ -1997,10 +2152,10 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
         `UPDATE clinic_listening_books
             SET grade = $2,
                 title = $3,
-                textbook_file_name = $4,
-                textbook_file_link = $5,
-                explanation_file_name = $6,
-                explanation_file_link = $7,
+                textbook_file_name = COALESCE(NULLIF($4, ''), textbook_file_name),
+                textbook_file_link = COALESCE(NULLIF($5, ''), textbook_file_link),
+                explanation_file_name = COALESCE(NULLIF($6, ''), explanation_file_name),
+                explanation_file_link = COALESCE(NULLIF($7, ''), explanation_file_link),
                 updated_at = NOW()
           WHERE id = $1::uuid
           RETURNING id::text, grade, title,
@@ -2029,10 +2184,10 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
          )
          VALUES ($1, $2, $3, $4, $5, $6, NOW())
          ON CONFLICT (grade, title)
-         DO UPDATE SET textbook_file_name = EXCLUDED.textbook_file_name,
-                       textbook_file_link = EXCLUDED.textbook_file_link,
-                       explanation_file_name = EXCLUDED.explanation_file_name,
-                       explanation_file_link = EXCLUDED.explanation_file_link,
+         DO UPDATE SET textbook_file_name = COALESCE(NULLIF(EXCLUDED.textbook_file_name, ''), clinic_listening_books.textbook_file_name),
+                       textbook_file_link = COALESCE(NULLIF(EXCLUDED.textbook_file_link, ''), clinic_listening_books.textbook_file_link),
+                       explanation_file_name = COALESCE(NULLIF(EXCLUDED.explanation_file_name, ''), clinic_listening_books.explanation_file_name),
+                       explanation_file_link = COALESCE(NULLIF(EXCLUDED.explanation_file_link, ''), clinic_listening_books.explanation_file_link),
                        updated_at = NOW()
          RETURNING id::text, grade, title,
                    textbook_file_name, textbook_file_link,
@@ -2077,11 +2232,6 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
       }
 
       if (!answers && !audioLink && !audioFileName) {
-        await pool.query(
-          `DELETE FROM clinic_listening_book_days
-            WHERE book_id = $1::uuid AND day_number = $2`,
-          [book.id, dayNumber]
-        );
         continue;
       }
 
@@ -2091,9 +2241,9 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
          )
          VALUES ($1::uuid, $2, $3, $4, $5, NOW())
          ON CONFLICT (book_id, day_number)
-         DO UPDATE SET answers = EXCLUDED.answers,
-                       audio_file_name = EXCLUDED.audio_file_name,
-                       audio_link = EXCLUDED.audio_link,
+         DO UPDATE SET answers = COALESCE(NULLIF(EXCLUDED.answers, ''), clinic_listening_book_days.answers),
+                       audio_file_name = COALESCE(NULLIF(EXCLUDED.audio_file_name, ''), clinic_listening_book_days.audio_file_name),
+                       audio_link = COALESCE(NULLIF(EXCLUDED.audio_link, ''), clinic_listening_book_days.audio_link),
                        updated_at = NOW()`,
         [book.id, dayNumber, answers, audioFileName, audioLink]
       );
@@ -2107,10 +2257,15 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
       [book.id]
     );
 
+    const publicBook = clinicListeningBookPublic(book, daysRes.rows);
+    syncClinicListeningBookForAssignedGradesToGas(publicBook).catch((error) => {
+      console.error('clinic listening assigned book GAS sync failed:', error && error.message ? error.message : error);
+    });
+
     res.json({
       ok: true,
       action: 'saveListeningBook',
-      book: clinicListeningBookPublic(book, daysRes.rows),
+      book: publicBook,
     });
   } catch (error) {
     if (error && error.code === '23505') {
@@ -2138,18 +2293,6 @@ app.get('/api/clinic-listening-materials', async (req, res, next) => {
       [grade]
     );
 
-    if (rows.length === 0) {
-      await importClinicListeningMaterialsFromGas(grade);
-      const refreshed = await pool.query(
-        `SELECT grade, day_number, answers, link, updated_at
-           FROM clinic_listening_materials
-          WHERE grade = $1
-          ORDER BY day_number ASC`,
-        [grade]
-      );
-      rows = refreshed.rows;
-    }
-
     res.json({ ok: true, materials: rows.map(clinicListeningMaterialPublic) });
   } catch (error) {
     next(error);
@@ -2170,18 +2313,6 @@ app.get('/api/clinic-listening-materials/book-title', async (req, res, next) => 
         LIMIT 1`,
       [grade]
     );
-
-    if (rows.length === 0) {
-      await importClinicListeningBookTitleFromGas(grade);
-      const refreshed = await pool.query(
-        `SELECT grade, title, updated_at
-           FROM clinic_listening_book_titles
-          WHERE grade = $1
-          LIMIT 1`,
-        [grade]
-      );
-      rows = refreshed.rows;
-    }
 
     res.json({
       ok: true,
@@ -2212,10 +2343,8 @@ app.post('/api/clinic-listening-materials/book-title', async (req, res, next) =>
       [grade, title]
     );
 
-    postClinicListeningToGas({
-      action: 'saveListeningBookTitle',
-      grade,
-      title,
+    syncClinicListeningGradeSelectionToGas(grade, title).catch((error) => {
+      console.error('clinic listening selected book GAS sync failed:', error && error.message ? error.message : error);
     });
 
     res.json({
@@ -2224,6 +2353,19 @@ app.post('/api/clinic-listening-materials/book-title', async (req, res, next) =>
       grade: rows[0].grade,
       title: rows[0].title,
       updatedAt: rows[0].updated_at,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/clinic-listening-materials/sync-sheet', async (req, res, next) => {
+  try {
+    const results = await syncAllClinicListeningGradeSelectionsToGas();
+    res.json({
+      ok: true,
+      action: 'syncListeningSheet',
+      results,
     });
   } catch (error) {
     next(error);
