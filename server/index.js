@@ -67,7 +67,7 @@ const ENGLISH_ROOM_CODES = new Set([
 const CLINIC_LISTENING_GAS_URL = process.env.CLINIC_LISTENING_GAS_URL ||
   'https://script.google.com/macros/s/AKfycbyTm_Plkg1I9GA1tTBbJWiYaFJI2Tuachrbwo_ZpGLQD4JpskyNe0H2KhEG688qMIPLHw/exec';
 const CLINIC_LISTENING_GRADES = ['초등부', '중1', '중2', '중3', '고1', '고2', '초등부 Starter'];
-const CLINIC_LISTENING_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_LISTENING_UPLOAD_MAX_BYTES || 50 * 1024 * 1024);
+const CLINIC_LISTENING_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_LISTENING_UPLOAD_MAX_BYTES || 100 * 1024 * 1024);
 const UPLOAD_ROOT = process.env.UPLOAD_ROOT || path.join(__dirname, '..', 'uploads');
 const CLINIC_LISTENING_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening');
 const CLINIC_LISTENING_BOOK_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening-books');
@@ -151,7 +151,7 @@ app.use('/api/clinic-listening-materials', (req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
-app.use('/api/clinic-listening-materials', express.json({ limit: '80mb' }));
+app.use('/api/clinic-listening-materials', express.json({ limit: '160mb' }));
 app.use('/api/clinic-listening-books', (req, res, next) => {
   const origin = String(req.headers.origin || '');
   const originRoot = origin.replace(/:\d+$/, '');
@@ -164,7 +164,7 @@ app.use('/api/clinic-listening-books', (req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
-app.use('/api/clinic-listening-books', express.json({ limit: '120mb' }));
+app.use('/api/clinic-listening-books', express.json({ limit: '160mb' }));
 app.use('/api/dashboard-storage', (req, res, next) => {
   const origin = String(req.headers.origin || '');
   const originRoot = origin.replace(/:\d+$/, '');
@@ -1930,7 +1930,6 @@ app.get('/api/clinic-listening-books', async (req, res, next) => {
 
 app.post('/api/clinic-listening-books', async (req, res, next) => {
   try {
-    const requestGrade = normalizeClinicListeningGrade(req.body.grade);
     const title = String(req.body.title || '').trim().slice(0, 200);
     if (!title) {
       return jsonError(res, 400, '듣기 책 이름을 입력해주세요.');
@@ -1956,11 +1955,8 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
           [title, CLINIC_LISTENING_BOOK_COMMON_GRADE]
         );
     const targetId = existingBookRes.rows[0]?.id || sameTitleRes.rows[0]?.id || '';
-    const bookGrade =
-      existingBookRes.rows[0]?.grade ||
-      sameTitleRes.rows[0]?.grade ||
-      CLINIC_LISTENING_BOOK_COMMON_GRADE;
-    const uploadGrade = requestGrade || bookGrade || 'common';
+    const bookGrade = CLINIC_LISTENING_BOOK_COMMON_GRADE;
+    const uploadGrade = 'common';
     let textbookFileName = String(req.body.textbookFileName || '').trim().slice(0, 300);
     let textbookFileLink = String(req.body.textbookFileLink || '').trim().slice(0, 1000);
     let explanationFileName = String(req.body.explanationFileName || '').trim().slice(0, 300);
@@ -1990,7 +1986,7 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
       }
     } catch (error) {
       if (error.message === 'CLINIC_LISTENING_FILE_TOO_LARGE') {
-        return jsonError(res, 400, '교재 파일은 50MB 이하로 업로드해주세요.');
+        return jsonError(res, 400, '교재 파일은 100MB 이하로 업로드해주세요.');
       }
       return jsonError(res, 400, '교재 파일 형식이 올바르지 않습니다.');
     }
@@ -2075,7 +2071,7 @@ app.post('/api/clinic-listening-books', async (req, res, next) => {
         }
       } catch (error) {
         if (error.message === 'CLINIC_LISTENING_FILE_TOO_LARGE') {
-          return jsonError(res, 400, '회차별 음성 파일은 50MB 이하로 업로드해주세요.');
+          return jsonError(res, 400, '회차별 음성 파일은 100MB 이하로 업로드해주세요.');
         }
         return jsonError(res, 400, '회차별 음성 파일 형식이 올바르지 않습니다.');
       }
@@ -2257,7 +2253,7 @@ app.post('/api/clinic-listening-materials', async (req, res, next) => {
       }
     } catch (error) {
       if (error.message === 'CLINIC_LISTENING_FILE_TOO_LARGE') {
-        return jsonError(res, 400, '듣기 파일은 50MB 이하로 업로드해주세요.');
+        return jsonError(res, 400, '듣기 파일은 100MB 이하로 업로드해주세요.');
       }
       return jsonError(res, 400, '듣기 파일 형식이 올바르지 않습니다.');
     }
