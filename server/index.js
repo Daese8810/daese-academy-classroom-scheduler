@@ -16,7 +16,19 @@ const SLOT_END = 22 * 60;
 const SLOT_MINUTES = 30;
 const SEOUL_OFFSET = '+09:00';
 const SEOUL_TZ = 'Asia/Seoul';
-const TEAM_COMMUNICATION_PEOPLE = ['스텐', '주디', '조나단', '존', '다나', '스테이시', '관리팀'];
+const TEAM_COMMUNICATION_PEOPLE = [
+  '스텐',
+  '주디',
+  '조나단',
+  '존',
+  '다나',
+  '스테이시',
+  '관리팀1',
+  '관리팀2',
+  '관리팀3',
+  '관리팀4',
+  '관리팀5',
+];
 const TODO_DEFAULT_ASSIGNEES = ['존', '주디', '스테이시', '다나', '조나단', '스텐'];
 const TODO_DELETE_PEOPLE = ['스텐', '존'];
 const TODO_DAILY_AUTO_TITLES = ['클리닉표 작성 및 확인', '반별 과제 안내'];

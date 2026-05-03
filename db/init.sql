@@ -215,7 +215,11 @@ VALUES
   ('존'),
   ('다나'),
   ('스테이시'),
-  ('관리팀')
+  ('관리팀1'),
+  ('관리팀2'),
+  ('관리팀3'),
+  ('관리팀4'),
+  ('관리팀5')
 ON CONFLICT (person_name) DO NOTHING;
 
 INSERT INTO rooms (code, name, short_name, floor, room_type, sort_order)
