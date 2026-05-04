@@ -11,6 +11,8 @@ const COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'daese_session';
 const SESSION_DAYS = Number(process.env.SESSION_DAYS || 14);
 const KAKAOWORK_BOT_APP_KEY = process.env.KAKAOWORK_BOT_APP_KEY || '';
 const KAKAOWORK_SUPPLY_REQUEST_EMAIL = process.env.KAKAOWORK_SUPPLY_REQUEST_EMAIL || 'ltdall@naver.com';
+const KAKAOWORK_REFERRAL_APP_KEY = process.env.KAKAOWORK_REFERRAL_APP_KEY || '';
+const KAKAOWORK_REFERRAL_EMAIL = process.env.KAKAOWORK_REFERRAL_EMAIL || 'ltdall@naver.com';
 const SLOT_START = 9 * 60;
 const SLOT_END = 22 * 60;
 const SLOT_MINUTES = 30;
@@ -224,6 +226,24 @@ app.use('/api/supply-requests', (req, res, next) => {
   next();
 });
 app.use('/api/supply-requests', express.json({ limit: '64kb' }));
+app.use('/api/referral-discount-notifications', (req, res, next) => {
+  const origin = String(req.headers.origin || '');
+  const originRoot = origin.replace(/:\d+$/, '');
+  if (
+    TODO_ALLOWED_ORIGINS.has(origin) ||
+    TODO_ALLOWED_ORIGINS.has(originRoot) ||
+    DASHBOARD_ALLOWED_ORIGINS.has(origin) ||
+    DASHBOARD_ALLOWED_ORIGINS.has(originRoot)
+  ) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+app.use('/api/referral-discount-notifications', express.json({ limit: '32kb' }));
 app.use('/api/vocabulary-workbook', (req, res, next) => {
   const origin = String(req.headers.origin || '');
   const originRoot = origin.replace(/:\d+$/, '');
@@ -472,6 +492,59 @@ async function sendSupplyRequestKakaoWorkMessageByEmail({ email, text }) {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${KAKAOWORK_BOT_APP_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, text }),
+      signal: controller.signal,
+    });
+    const responseText = await response.text();
+    let data = null;
+    try {
+      data = responseText ? JSON.parse(responseText) : null;
+    } catch (_) {}
+
+    if (!response.ok || (data && data.success === false)) {
+      const message = data && data.error && data.error.message
+        ? data.error.message
+        : responseText || `HTTP ${response.status}`;
+      const error = new Error(message);
+      error.statusCode = response.status;
+      throw error;
+    }
+    return data || { success: true };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function buildReferralDiscountMessage(payload) {
+  const student = [
+    payload.school || '',
+    payload.grade || '',
+    payload.name || '',
+  ].filter(Boolean).join(' / ') || '미입력';
+  return [
+    '[소개 할인 신규생 등록]',
+    `등록자: ${payload.createdBy || '미입력'}`,
+    `신규 등원일: ${payload.date || '미입력'}`,
+    `학생: ${student}`,
+    `반명: ${payload.className || '미입력'}`,
+    `소개 할인: ${payload.referralDiscount || '미입력'}`,
+  ].join('\n');
+}
+
+async function sendReferralDiscountKakaoWorkMessageByEmail({ email, text }) {
+  if (!KAKAOWORK_REFERRAL_APP_KEY) {
+    throw new Error('KAKAOWORK_REFERRAL_APP_KEY_MISSING');
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(KAKAOWORK_MESSAGES_SEND_BY_EMAIL_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${KAKAOWORK_REFERRAL_APP_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ email, text }),
@@ -2357,6 +2430,39 @@ app.post('/api/supply-requests', async (req, res, next) => {
   } catch (error) {
     if (error && error.message === 'KAKAOWORK_BOT_APP_KEY_MISSING') {
       return jsonError(res, 500, '카카오워크 봇 앱키가 서버에 설정되어 있지 않습니다.');
+    }
+    next(error);
+  }
+});
+
+app.post('/api/referral-discount-notifications', async (req, res, next) => {
+  try {
+    const payload = {
+      createdBy: sanitizeSupplyRequestText(req.body.createdBy, 80),
+      date: sanitizeSupplyRequestText(req.body.date, 40),
+      school: sanitizeSupplyRequestText(req.body.school, 80),
+      grade: sanitizeSupplyRequestText(req.body.grade, 40),
+      name: sanitizeSupplyRequestText(req.body.name, 80),
+      className: sanitizeSupplyRequestText(req.body.className, 160),
+      referralDiscount: sanitizeSupplyRequestText(req.body.referralDiscount, 300),
+    };
+
+    if (!payload.name) {
+      return jsonError(res, 400, '학생 이름을 입력해주세요.');
+    }
+    if (!payload.referralDiscount) {
+      return jsonError(res, 400, '소개 할인 내용이 없습니다.');
+    }
+
+    const message = buildReferralDiscountMessage(payload);
+    await sendReferralDiscountKakaoWorkMessageByEmail({
+      email: KAKAOWORK_REFERRAL_EMAIL,
+      text: message,
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    if (error && error.message === 'KAKAOWORK_REFERRAL_APP_KEY_MISSING') {
+      return jsonError(res, 500, '소개 할인 카카오워크 봇 앱키가 서버에 설정되어 있지 않습니다.');
     }
     next(error);
   }
