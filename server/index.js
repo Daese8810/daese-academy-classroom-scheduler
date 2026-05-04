@@ -102,6 +102,10 @@ const TODO_ALLOWED_ORIGINS = new Set([
 ]);
 const DASHBOARD_ALLOWED_ORIGINS = new Set([
   'https://daese8810.github.io',
+  'https://daeseenglish.com',
+  'https://www.daeseenglish.com',
+  'https://daeseaca.com',
+  'https://www.daeseaca.com',
   'https://daeseaca.cafe24.com',
   'http://localhost',
   'http://127.0.0.1',
