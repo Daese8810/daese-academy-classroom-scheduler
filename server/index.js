@@ -13,6 +13,8 @@ const KAKAOWORK_BOT_APP_KEY = process.env.KAKAOWORK_BOT_APP_KEY || '';
 const KAKAOWORK_SUPPLY_REQUEST_EMAIL = process.env.KAKAOWORK_SUPPLY_REQUEST_EMAIL || 'ltdall@naver.com';
 const KAKAOWORK_REFERRAL_APP_KEY = process.env.KAKAOWORK_REFERRAL_APP_KEY || '';
 const KAKAOWORK_REFERRAL_EMAIL = process.env.KAKAOWORK_REFERRAL_EMAIL || 'ltdall@naver.com';
+const KAKAOWORK_CLASS_MOVE_APP_KEY = process.env.KAKAOWORK_CLASS_MOVE_APP_KEY || '';
+const KAKAOWORK_CLASS_MOVE_EMAIL = process.env.KAKAOWORK_CLASS_MOVE_EMAIL || 'ltdall@naver.com';
 const SLOT_START = 9 * 60;
 const SLOT_END = 22 * 60;
 const SLOT_MINUTES = 30;
@@ -248,6 +250,24 @@ app.use('/api/referral-discount-notifications', (req, res, next) => {
   next();
 });
 app.use('/api/referral-discount-notifications', express.json({ limit: '32kb' }));
+app.use('/api/class-move-notifications', (req, res, next) => {
+  const origin = String(req.headers.origin || '');
+  const originRoot = origin.replace(/:\d+$/, '');
+  if (
+    TODO_ALLOWED_ORIGINS.has(origin) ||
+    TODO_ALLOWED_ORIGINS.has(originRoot) ||
+    DASHBOARD_ALLOWED_ORIGINS.has(origin) ||
+    DASHBOARD_ALLOWED_ORIGINS.has(originRoot)
+  ) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+app.use('/api/class-move-notifications', express.json({ limit: '32kb' }));
 app.use('/api/vocabulary-workbook', (req, res, next) => {
   const origin = String(req.headers.origin || '');
   const originRoot = origin.replace(/:\d+$/, '');
@@ -549,6 +569,74 @@ async function sendReferralDiscountKakaoWorkMessageByEmail({ email, text }) {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${KAKAOWORK_REFERRAL_APP_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, text }),
+      signal: controller.signal,
+    });
+    const responseText = await response.text();
+    let data = null;
+    try {
+      data = responseText ? JSON.parse(responseText) : null;
+    } catch (_) {}
+
+    if (!response.ok || (data && data.success === false)) {
+      const message = data && data.error && data.error.message
+        ? data.error.message
+        : responseText || `HTTP ${response.status}`;
+      const error = new Error(message);
+      error.statusCode = response.status;
+      throw error;
+    }
+    return data || { success: true };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeClassMoveNotificationStudents(value) {
+  const list = Array.isArray(value) ? value : [];
+  return list.slice(0, 80).map((student) => ({
+    name: sanitizeSupplyRequestText(student && student.name, 80),
+    school: sanitizeSupplyRequestText(student && student.school, 80),
+    memo: sanitizeSupplyRequestText(student && student.memo, 200),
+  })).filter((student) => student.name);
+}
+
+function buildClassMoveNotificationMessage(payload) {
+  const students = payload.students.length > 0
+    ? payload.students.map((student) => {
+        const school = student.school ? `(${student.school})` : '';
+        const memo = student.memo ? ` / ${student.memo}` : '';
+        return `- ${student.name}${school}${memo}`;
+      })
+    : ['- 미입력'];
+
+  return [
+    '[반 이동]',
+    '반 이동 결과를 어플에 반영해주세요',
+    `처리자: ${payload.movedBy || '미입력'}`,
+    `처리 시각: ${payload.movedAt || '미입력'}`,
+    `이전 반: ${payload.sourceClassName || payload.sourceClassHeader || '미입력'}`,
+    `이동 반: ${payload.targetClassName || payload.targetClassHeader || '미입력'}`,
+    '',
+    '학생',
+    ...students,
+  ].join('\n');
+}
+
+async function sendClassMoveKakaoWorkMessageByEmail({ email, text }) {
+  if (!KAKAOWORK_CLASS_MOVE_APP_KEY) {
+    throw new Error('KAKAOWORK_CLASS_MOVE_APP_KEY_MISSING');
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(KAKAOWORK_MESSAGES_SEND_BY_EMAIL_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${KAKAOWORK_CLASS_MOVE_APP_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ email, text }),
@@ -2467,6 +2555,36 @@ app.post('/api/referral-discount-notifications', async (req, res, next) => {
   } catch (error) {
     if (error && error.message === 'KAKAOWORK_REFERRAL_APP_KEY_MISSING') {
       return jsonError(res, 500, '소개 할인 카카오워크 봇 앱키가 서버에 설정되어 있지 않습니다.');
+    }
+    next(error);
+  }
+});
+
+app.post('/api/class-move-notifications', async (req, res, next) => {
+  try {
+    const payload = {
+      movedBy: sanitizeSupplyRequestText(req.body.movedBy, 80),
+      movedAt: sanitizeSupplyRequestText(req.body.movedAt, 80),
+      sourceClassName: sanitizeSupplyRequestText(req.body.sourceClassName, 200),
+      sourceClassHeader: sanitizeSupplyRequestText(req.body.sourceClassHeader, 300),
+      targetClassName: sanitizeSupplyRequestText(req.body.targetClassName, 200),
+      targetClassHeader: sanitizeSupplyRequestText(req.body.targetClassHeader, 300),
+      students: normalizeClassMoveNotificationStudents(req.body.students),
+    };
+
+    if (payload.students.length === 0) {
+      return jsonError(res, 400, '반 이동 학생 정보가 없습니다.');
+    }
+
+    const message = buildClassMoveNotificationMessage(payload);
+    await sendClassMoveKakaoWorkMessageByEmail({
+      email: KAKAOWORK_CLASS_MOVE_EMAIL,
+      text: message,
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    if (error && error.message === 'KAKAOWORK_CLASS_MOVE_APP_KEY_MISSING') {
+      return jsonError(res, 500, '반 이동 카카오워크 봇 앱키가 서버에 설정되어 있지 않습니다.');
     }
     next(error);
   }
