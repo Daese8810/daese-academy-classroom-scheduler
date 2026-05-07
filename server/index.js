@@ -91,6 +91,11 @@ const CLINIC_DICTATION_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_DICTATION_UP
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_VOCABULARY_MODEL = process.env.OPENAI_VOCABULARY_MODEL || 'gpt-4.1-mini';
 const OPENAI_VOCABULARY_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_VOCABULARY_MAX_OUTPUT_TOKENS || 32000);
+const OPENAI_WRITING_WORKSHEET_MODEL =
+  process.env.OPENAI_WRITING_WORKSHEET_MODEL || OPENAI_VOCABULARY_MODEL;
+const OPENAI_WRITING_WORKSHEET_MAX_OUTPUT_TOKENS = Number(
+  process.env.OPENAI_WRITING_WORKSHEET_MAX_OUTPUT_TOKENS || 12000
+);
 const UPLOAD_ROOT = process.env.UPLOAD_ROOT || path.join(__dirname, '..', 'uploads');
 const CLINIC_LISTENING_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening');
 const CLINIC_LISTENING_BOOK_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening-books');
@@ -286,6 +291,24 @@ app.use('/api/vocabulary-workbook', (req, res, next) => {
   next();
 });
 app.use('/api/vocabulary-workbook', express.json({ limit: '512kb' }));
+app.use('/api/writing-worksheet', (req, res, next) => {
+  const origin = String(req.headers.origin || '');
+  const originRoot = origin.replace(/:\d+$/, '');
+  if (
+    TODO_ALLOWED_ORIGINS.has(origin) ||
+    TODO_ALLOWED_ORIGINS.has(originRoot) ||
+    DASHBOARD_ALLOWED_ORIGINS.has(origin) ||
+    DASHBOARD_ALLOWED_ORIGINS.has(originRoot)
+  ) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+app.use('/api/writing-worksheet', express.json({ limit: '512kb' }));
 app.use('/uploads', express.static(UPLOAD_ROOT, {
   etag: true,
   maxAge: '7d',
@@ -368,6 +391,76 @@ function normalizeVocabularyWorkbookWords(raw) {
     if (words.length >= 300) break;
   }
   return words;
+}
+
+function sanitizeWritingWorksheetText(value, maxLength = 1200) {
+  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, maxLength);
+}
+
+function normalizeWritingWorksheetExerciseTypes(raw) {
+  const allowed = new Set([
+    'rearrange',
+    'rearrangeTransform',
+    'rearrangeAdd',
+    'rearrangeTransformAdd',
+    'guided',
+    'errorCorrection',
+    'expansion',
+  ]);
+  const values = Array.isArray(raw)
+    ? raw
+    : String(raw || '').split(/[,|\s]+/);
+  const result = [];
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (allowed.has(text) && !result.includes(text)) {
+      result.push(text);
+    }
+  }
+  return result.length ? result : ['rearrange'];
+}
+
+function parseOpenAIJsonObject(text) {
+  const source = String(text || '').trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  try {
+    return JSON.parse(source);
+  } catch (error) {
+    const first = source.indexOf('{');
+    const last = source.lastIndexOf('}');
+    if (first >= 0 && last > first) {
+      return JSON.parse(source.slice(first, last + 1));
+    }
+    throw error;
+  }
+}
+
+function normalizeWritingWorksheetSentences(raw, limit) {
+  const source = raw && Array.isArray(raw.sentences) ? raw.sentences : [];
+  const result = [];
+  const seen = new Set();
+  for (const item of source) {
+    if (!item || typeof item !== 'object') continue;
+    const english = sanitizeWritingWorksheetText(item.english, 240);
+    const korean = sanitizeWritingWorksheetText(item.korean, 240);
+    if (!english || !korean) continue;
+    const key = `${english.toLowerCase()}|${korean}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({
+      english,
+      korean,
+      wrong: sanitizeWritingWorksheetText(item.wrong, 240) || english,
+      baseSentence: sanitizeWritingWorksheetText(item.baseSentence, 180) || english,
+      expansionCondition: sanitizeWritingWorksheetText(item.expansionCondition, 200) ||
+        '핵심 문법을 사용해 문장을 더 정확하게 확장하기',
+      tip: sanitizeWritingWorksheetText(item.tip, 240) || '교재 범위의 핵심 문법을 확인합니다.',
+    });
+    if (result.length >= limit) break;
+  }
+  return result;
 }
 
 function extractOpenAIResponseText(data) {
@@ -2586,6 +2679,130 @@ app.post('/api/class-move-notifications', async (req, res, next) => {
     if (error && error.message === 'KAKAOWORK_CLASS_MOVE_APP_KEY_MISSING') {
       return jsonError(res, 500, '반 이동 카카오워크 봇 앱키가 서버에 설정되어 있지 않습니다.');
     }
+    next(error);
+  }
+});
+
+app.post('/api/writing-worksheet/generate-sentences', async (req, res, next) => {
+  try {
+    if (!OPENAI_API_KEY) {
+      return jsonError(res, 503, '영작 문제지 OpenAI API 키가 서버에 설정되어 있지 않습니다.');
+    }
+
+    const requestedCount = Number.parseInt(String(req.body.count || '12'), 10);
+    const count = Number.isInteger(requestedCount)
+      ? Math.min(Math.max(requestedCount, 1), 80)
+      : 12;
+    const payload = {
+      className: sanitizeWritingWorksheetText(req.body.className, 120),
+      classProfile: sanitizeWritingWorksheetText(req.body.classProfile, 180),
+      level: sanitizeWritingWorksheetText(req.body.level, 40),
+      difficulty: sanitizeWritingWorksheetText(req.body.difficulty, 40),
+      textbook: sanitizeWritingWorksheetText(req.body.textbook, 180),
+      progress: sanitizeWritingWorksheetText(req.body.progress, 120),
+      unitTitle: sanitizeWritingWorksheetText(req.body.unitTitle, 220),
+      grammarFocus: sanitizeWritingWorksheetText(req.body.grammarFocus, 700),
+      vocabulary: sanitizeWritingWorksheetText(req.body.vocabulary, 700),
+      teacherNote: sanitizeWritingWorksheetText(req.body.teacherNote, 700),
+      exerciseTypes: normalizeWritingWorksheetExerciseTypes(req.body.exerciseTypes),
+    };
+
+    if (!payload.textbook || !payload.progress || !payload.unitTitle || !payload.grammarFocus) {
+      return jsonError(res, 400, '교재 범위, 단원명, 핵심 문법 정보가 필요합니다.');
+    }
+
+    const response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: OPENAI_WRITING_WORKSHEET_MODEL,
+        input: [
+          {
+            role: 'system',
+            content: [
+              'You generate sentence candidates for a Korean English academy writing worksheet.',
+              'Return valid JSON only. Do not use markdown.',
+              'Every sentence must be strictly based on the supplied textbook scope.',
+              'Do not create grammar or vocabulary outside the supplied scope.',
+            ].join('\n'),
+          },
+          {
+            role: 'user',
+            content: [
+              `Create exactly ${count} unique sentence candidates.`,
+              'Return this JSON shape:',
+              '{"sentences":[{"english":"","korean":"","wrong":"","baseSentence":"","expansionCondition":"","tip":""}]}',
+              '',
+              'Field rules:',
+              '- english: one natural English sentence using the target grammar.',
+              '- korean: Korean translation of english.',
+              '- wrong: one intentionally incorrect English sentence with a target-grammar error.',
+              '- baseSentence: a shorter/simple English sentence related to english.',
+              '- expansionCondition: Korean instruction for expanding baseSentence into english.',
+              '- tip: short Korean teaching point tied to the target grammar.',
+              '',
+              'Hard constraints:',
+              '- No duplicate english, korean, or wrong sentences.',
+              '- Use only the textbook unit, grammar, vocabulary, and teacher memo below.',
+              '- Keep sentences appropriate for the student level and difficulty.',
+              '- Output JSON only.',
+              '',
+              `Class: ${payload.className}`,
+              `Class profile: ${payload.classProfile}`,
+              `Student level: ${payload.level}`,
+              `Difficulty: ${payload.difficulty}`,
+              `Textbook: ${payload.textbook}`,
+              `Printed-page progress: ${payload.progress}`,
+              `Unit title: ${payload.unitTitle}`,
+              `Core grammar: ${payload.grammarFocus}`,
+              `Required vocabulary: ${payload.vocabulary}`,
+              `Teacher memo: ${payload.teacherNote}`,
+              `Requested exercise types: ${payload.exerciseTypes.join(', ')}`,
+            ].join('\n'),
+          },
+        ],
+        temperature: 0.35,
+        max_output_tokens: OPENAI_WRITING_WORKSHEET_MAX_OUTPUT_TOKENS,
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.error('OpenAI writing worksheet error:', response.status, body.slice(0, 500));
+      return jsonError(res, 502, `OpenAI 응답 오류: HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const content = extractOpenAIResponseText(data);
+    if (!content) {
+      return jsonError(res, 502, 'OpenAI 응답에서 영작 문장 데이터를 찾지 못했습니다.');
+    }
+
+    let parsed;
+    try {
+      parsed = parseOpenAIJsonObject(content);
+    } catch (error) {
+      console.error('OpenAI writing worksheet JSON parse error:', content.slice(0, 500));
+      return jsonError(res, 502, 'OpenAI 응답을 JSON으로 해석하지 못했습니다.');
+    }
+
+    const sentences = normalizeWritingWorksheetSentences(parsed, count);
+    if (!sentences.length) {
+      return jsonError(res, 502, 'OpenAI 응답에서 사용할 수 있는 영작 문장이 없습니다.');
+    }
+
+    res.json({
+      ok: true,
+      action: 'generateWritingWorksheetSentences',
+      model: OPENAI_WRITING_WORKSHEET_MODEL,
+      requestedCount: count,
+      count: sentences.length,
+      sentences,
+    });
+  } catch (error) {
     next(error);
   }
 });
