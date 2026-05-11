@@ -122,6 +122,7 @@ const DASHBOARD_STORAGE_KEYS = new Set([
   'exam-scores',
   'clinic-attendance-records',
   'clinic-table-results',
+  '_utf8_health_check',
 ]);
 
 if (!DATABASE_URL) {
@@ -223,7 +224,7 @@ app.use('/api/dashboard-storage', (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
-  res.setHeader('Access-Control-Allow-Methods', 'GET,PUT,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,PUT,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -2578,6 +2579,22 @@ app.put('/api/dashboard-storage/:key', async (req, res, next) => {
       key,
       updatedAt: rows[0]?.updated_at || null,
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/dashboard-storage/:key', async (req, res, next) => {
+  try {
+    const key = String(req.params.key || '').trim();
+    if (key !== '_utf8_health_check') {
+      return jsonError(res, 400, '吏?먰븯吏 ?딅뒗 ??μ냼 ?ㅼ엯?덈떎.');
+    }
+
+    await pool.query('DELETE FROM dashboard_storage WHERE storage_key = $1', [
+      key,
+    ]);
+    res.json({ ok: true, key });
   } catch (error) {
     next(error);
   }
