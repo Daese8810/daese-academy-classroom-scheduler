@@ -117,7 +117,12 @@ const DASHBOARD_ALLOWED_ORIGINS = new Set([
   'http://localhost',
   'http://127.0.0.1',
 ]);
-const DASHBOARD_STORAGE_KEYS = new Set(['teacher-preferences', 'exam-scores']);
+const DASHBOARD_STORAGE_KEYS = new Set([
+  'teacher-preferences',
+  'exam-scores',
+  'clinic-attendance-records',
+  'clinic-table-results',
+]);
 
 if (!DATABASE_URL) {
   console.error('DATABASE_URL 환경 변수가 필요합니다.');
@@ -863,6 +868,27 @@ function canDeleteTodoTask(name) {
 
 function isValidDashboardStorageKey(key) {
   return DASHBOARD_STORAGE_KEYS.has(String(key || '').trim());
+}
+
+function isValidDashboardStorageJsonText(jsonText) {
+  const text = String(jsonText || '').trim() || '{}';
+  try {
+    JSON.parse(text);
+    return true;
+  } catch (_) {
+    // The dashboard stores UTF-8 JSON as Base64 to avoid charset loss.
+  }
+
+  try {
+    const decoded = Buffer.from(text, 'base64').toString('utf8');
+    if (!decoded || decoded.includes('\uFFFD')) {
+      return false;
+    }
+    JSON.parse(decoded);
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 function teamMessagePublic(row) {
@@ -2534,9 +2560,7 @@ app.put('/api/dashboard-storage/:key', async (req, res, next) => {
     }
 
     const jsonText = String(req.body?.json ?? '').trim() || '{}';
-    try {
-      JSON.parse(jsonText);
-    } catch (_) {
+    if (!isValidDashboardStorageJsonText(jsonText)) {
       return jsonError(res, 400, '저장할 JSON 형식이 올바르지 않습니다.');
     }
 
