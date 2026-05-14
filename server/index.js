@@ -211,7 +211,7 @@ app.use('/api/clinic-dictation', (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -867,6 +867,10 @@ function canDeleteTodoTask(name) {
   return TODO_DELETE_PEOPLE.includes(String(name || '').trim());
 }
 
+function canDeleteClinicDictationAttempt(name) {
+  return String(name || '').trim() === '스텐';
+}
+
 function isValidDashboardStorageKey(key) {
   return DASHBOARD_STORAGE_KEYS.has(String(key || '').trim());
 }
@@ -1413,6 +1417,82 @@ async function saveClinicDictationUpload(req, rawFile) {
     name: safeName,
     url: `${publicBaseUrl(req)}/uploads/dictation/${encodeURIComponent(safeName)}`,
   };
+}
+
+function clinicDictationUploadPathFromUrl(imageUrl) {
+  const raw = String(imageUrl || '').trim();
+  if (!raw) return '';
+  let parsed;
+  try {
+    parsed = new URL(raw, 'https://daeseaca.cafe24.com');
+  } catch (_) {
+    return '';
+  }
+  if (!parsed.pathname.startsWith('/uploads/dictation/')) {
+    return '';
+  }
+  let fileName = '';
+  try {
+    fileName = path.basename(decodeURIComponent(parsed.pathname));
+  } catch (_) {
+    return '';
+  }
+  if (!fileName || fileName === '.' || fileName === '..') {
+    return '';
+  }
+  const root = path.resolve(CLINIC_DICTATION_UPLOAD_DIR);
+  const target = path.resolve(root, fileName);
+  if (target !== root && target.startsWith(`${root}${path.sep}`)) {
+    return target;
+  }
+  return '';
+}
+
+function clinicDictationImageUrlsFromRow(row) {
+  const urls = [];
+  const addUrl = (value) => {
+    const text = String(value || '').trim();
+    if (text) urls.push(text);
+  };
+  addUrl(row.dictation_image_url);
+  const rawUrls = row.dictation_image_urls;
+  if (Array.isArray(rawUrls)) {
+    rawUrls.forEach(addUrl);
+  } else if (typeof rawUrls === 'string' && rawUrls.trim()) {
+    try {
+      const parsed = JSON.parse(rawUrls);
+      if (Array.isArray(parsed)) {
+        parsed.forEach(addUrl);
+      }
+    } catch (_) {
+      rawUrls.split(',').forEach(addUrl);
+    }
+  }
+  return [...new Set(urls)];
+}
+
+async function deleteClinicDictationUploadedImages(rows) {
+  let deletedImageCount = 0;
+  let failedImageCount = 0;
+  const paths = new Set();
+  for (const row of rows) {
+    for (const imageUrl of clinicDictationImageUrlsFromRow(row)) {
+      const localPath = clinicDictationUploadPathFromUrl(imageUrl);
+      if (localPath) paths.add(localPath);
+    }
+  }
+
+  for (const localPath of paths) {
+    try {
+      await fs.promises.unlink(localPath);
+      deletedImageCount += 1;
+    } catch (error) {
+      if (!error || error.code !== 'ENOENT') {
+        failedImageCount += 1;
+      }
+    }
+  }
+  return { deletedImageCount, failedImageCount };
 }
 
 async function fetchClinicListeningGasJson(params) {
@@ -3395,6 +3475,46 @@ app.get('/api/clinic-dictation/admin', async (req, res, next) => {
       ok: true,
       attempts: rows.map(clinicDictationAttemptPublic),
       count: rows.length,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/clinic-dictation/admin', async (req, res, next) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const teacherName = String(body.teacherName || req.query.teacherName || '').trim();
+    if (!canDeleteClinicDictationAttempt(teacherName)) {
+      return jsonError(res, 403, '딕테이션 결과 삭제는 스텐 계정만 가능합니다.');
+    }
+
+    const ids = Array.isArray(body.ids)
+      ? [...new Set(body.ids.map((id) => String(id || '').trim()).filter(Boolean))]
+      : [];
+    if (!ids.length) {
+      return jsonError(res, 400, '삭제할 딕테이션 결과를 선택해주세요.');
+    }
+    const invalidId = ids.find(
+      (id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+    );
+    if (invalidId) {
+      return jsonError(res, 400, '딕테이션 결과 ID가 올바르지 않습니다.');
+    }
+
+    const { rows } = await pool.query(
+      `DELETE FROM clinic_dictation_attempts
+        WHERE id = ANY($1::uuid[])
+        RETURNING id, dictation_image_url, dictation_image_name`,
+      [ids]
+    );
+    const imageDeleteResult = await deleteClinicDictationUploadedImages(rows);
+
+    res.json({
+      ok: true,
+      deletedCount: rows.length,
+      deletedIds: rows.map((row) => row.id),
+      ...imageDeleteResult,
     });
   } catch (error) {
     next(error);
