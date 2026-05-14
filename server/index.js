@@ -84,7 +84,25 @@ const ENGLISH_ROOM_CODES = new Set([
 ]);
 const CLINIC_LISTENING_GAS_URL = process.env.CLINIC_LISTENING_GAS_URL ||
   'https://script.google.com/macros/s/AKfycbyTm_Plkg1I9GA1tTBbJWiYaFJI2Tuachrbwo_ZpGLQD4JpskyNe0H2KhEG688qMIPLHw/exec';
-const CLINIC_LISTENING_GRADES = ['초등부', '중1', '중2', '중3', '고1', '고2', '초등부 Starter'];
+const CLINIC_LISTENING_GRADES = [
+  '초등부',
+  '화목 초등부',
+  '초등부 Starter',
+  '중1',
+  '화목 중1',
+  '중2',
+  '화목 중2',
+  '중3',
+  '화목 중3',
+  '고1',
+  '고2',
+];
+const CLINIC_DICTATION_GRADE_ALIASES = new Map([
+  ['화목 초등부', '초등부'],
+  ['화목 중1', '중1'],
+  ['화목 중2', '중2'],
+  ['화목 중3', '중3'],
+]);
 const CLINIC_LISTENING_SHEET_SYNC_MIN_VERSION = 3;
 const CLINIC_LISTENING_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_LISTENING_UPLOAD_MAX_BYTES || 100 * 1024 * 1024);
 const CLINIC_DICTATION_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_DICTATION_UPLOAD_MAX_BYTES || 8 * 1024 * 1024);
@@ -1237,6 +1255,12 @@ function normalizeClinicListeningGrade(raw) {
   return CLINIC_LISTENING_GRADES.includes(grade) ? grade : '';
 }
 
+function normalizeClinicDictationGrade(raw) {
+  const grade = normalizeClinicListeningGrade(raw);
+  if (!grade) return '';
+  return CLINIC_DICTATION_GRADE_ALIASES.get(grade) || grade;
+}
+
 function normalizeClinicListeningDayNumber(raw) {
   const value = Number(String(raw || '').replace(/[^\d]/g, ''));
   return Number.isInteger(value) && value >= 1 && value <= 60 ? value : 0;
@@ -2108,6 +2132,36 @@ async function ensureClinicListeningMaterialTables() {
       ON clinic_dictation_attempts (phone, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_clinic_dictation_attempts_class_status
       ON clinic_dictation_attempts (class_name, dictation_required, dictation_submitted);
+  `);
+
+  await pool.query(`
+    WITH grade_sources(target_grade, source_grade) AS (
+      VALUES
+        ('화목 초등부', '초등부'),
+        ('화목 중1', '중1'),
+        ('화목 중2', '중2'),
+        ('화목 중3', '중3')
+    )
+    INSERT INTO clinic_listening_book_titles (grade, title, updated_at)
+    SELECT grade_sources.target_grade, source.title, source.updated_at
+      FROM grade_sources
+      JOIN clinic_listening_book_titles source
+        ON source.grade = grade_sources.source_grade
+    ON CONFLICT (grade) DO NOTHING;
+
+    WITH grade_sources(target_grade, source_grade) AS (
+      VALUES
+        ('화목 초등부', '초등부'),
+        ('화목 중1', '중1'),
+        ('화목 중2', '중2'),
+        ('화목 중3', '중3')
+    )
+    INSERT INTO clinic_listening_materials (grade, day_number, answers, link, updated_at)
+    SELECT grade_sources.target_grade, source.day_number, source.answers, source.link, source.updated_at
+      FROM grade_sources
+      JOIN clinic_listening_materials source
+        ON source.grade = grade_sources.source_grade
+    ON CONFLICT (grade, day_number) DO NOTHING;
   `);
 }
 
@@ -3432,7 +3486,7 @@ app.get('/api/clinic-dictation/admin', async (req, res, next) => {
     };
 
     const className = normalizeClinicStudentText(req.query.className);
-    const grade = normalizeClinicListeningGrade(req.query.grade);
+    const grade = normalizeClinicDictationGrade(req.query.grade);
     const status = String(req.query.status || '').trim();
     const phone = normalizeClinicPhone(req.query.phone);
     const name = normalizeClinicStudentText(req.query.name);
@@ -3526,7 +3580,7 @@ app.post('/api/clinic-dictation/attempts', async (req, res, next) => {
     const phone = normalizeClinicPhone(req.body.phone);
     const studentName = normalizeClinicStudentText(req.body.name || req.body.studentName);
     const className = normalizeClinicStudentText(req.body.className || '미정');
-    const grade = normalizeClinicListeningGrade(req.body.grade);
+    const grade = normalizeClinicDictationGrade(req.body.grade);
     const dayNumber = normalizeClinicListeningDayNumber(req.body.dayNumber || req.body.day);
     const totalCount = normalizePositiveInteger(req.body.totalCount, 1, 300);
     const correctCount = normalizePositiveInteger(req.body.correctCount, 0, 300);
