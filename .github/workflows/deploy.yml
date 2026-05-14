@@ -20,10 +20,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          : "${SERVER_HOST:?SERVER_HOST secret is required}"
-          : "${SERVER_USER:?SERVER_USER secret is required}"
           : "${SERVER_SSH_KEY:?SERVER_SSH_KEY secret is required}"
 
+          SERVER_HOST="${SERVER_HOST:-daeseaca.cafe24.com}"
+          SERVER_USER="${SERVER_USER:-root}"
           SERVER_PORT="${SERVER_PORT:-22}"
           SERVER_APP_DIR="${SERVER_APP_DIR:-/opt/daese_academy_app}"
 
