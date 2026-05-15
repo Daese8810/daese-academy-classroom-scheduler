@@ -919,6 +919,16 @@ function addDays(dateStr, amount) {
   return dt.toISOString().slice(0, 10);
 }
 
+const KOREAN_WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
+
+function formatReservationNoticeDate(dateStr) {
+  const date = String(dateStr || '').trim();
+  if (!isValidDate(date)) return date;
+  const [y, m, d] = date.split('-').map(Number);
+  const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return `${date} ${KOREAN_WEEKDAY_LABELS[weekday]}`;
+}
+
 function addMonthsClamped(dateStr, amount) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const first = new Date(Date.UTC(y, m - 1 + amount, 1));
@@ -1249,8 +1259,8 @@ function crossDepartmentReservationDirection({ owner, room, category }) {
 
 function reservationDateSummary(payloads, fallbackDate) {
   const dates = Array.isArray(payloads) ? payloads.map((item) => item.date).filter(Boolean) : [];
-  if (dates.length <= 1) return dates[0] || fallbackDate;
-  return `${dates[0]} ~ ${dates[dates.length - 1]} (${dates.length}회 반복)`;
+  if (dates.length <= 1) return formatReservationNoticeDate(dates[0] || fallbackDate);
+  return `${formatReservationNoticeDate(dates[0])} ~ ${formatReservationNoticeDate(dates[dates.length - 1])} (${dates.length}회 반복)`;
 }
 
 function classroomAppUrl() {
