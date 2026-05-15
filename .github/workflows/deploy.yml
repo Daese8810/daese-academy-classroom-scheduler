@@ -22,10 +22,10 @@ jobs:
 
           : "${SERVER_SSH_KEY:?SERVER_SSH_KEY secret is required}"
 
-          SERVER_HOST="${SERVER_HOST:-daeseaca.cafe24.com}"
-          SERVER_USER="${SERVER_USER:-root}"
-          SERVER_PORT="${SERVER_PORT:-22}"
-          SERVER_APP_DIR="${SERVER_APP_DIR:-/opt/daese_academy_app}"
+          SERVER_HOST=$(printf '%s' "${SERVER_HOST:-daeseaca.cafe24.com}" | tr -d '\r\n')
+          SERVER_USER=$(printf '%s' "${SERVER_USER:-root}" | tr -d '\r\n')
+          SERVER_PORT=$(printf '%s' "${SERVER_PORT:-22}" | tr -d '\r\n')
+          SERVER_APP_DIR=$(printf '%s' "${SERVER_APP_DIR:-/opt/daese_academy_app}" | tr -d '\r\n')
 
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
