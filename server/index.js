@@ -283,7 +283,7 @@ app.use('/api/dashboard-storage', (req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
-app.use('/api/dashboard-storage', express.json({ limit: '50mb' }));
+app.use('/api/dashboard-storage', express.json({ limit: '160mb' }));
 app.use('/api/supply-requests', (req, res, next) => {
   const origin = String(req.headers.origin || '');
   const originRoot = origin.replace(/:\d+$/, '');
