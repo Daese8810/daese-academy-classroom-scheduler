@@ -2022,9 +2022,6 @@ function normalizeAttendanceHomeworkMissingRecord(value) {
   if (otherText && !categories.includes('other')) {
     categories.push('other');
   }
-  if (categories.length === 0) {
-    return null;
-  }
   return { categories, otherText };
 }
 
