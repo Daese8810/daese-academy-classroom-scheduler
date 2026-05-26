@@ -24,19 +24,7 @@ const SLOT_END = 22 * 60;
 const SLOT_MINUTES = 30;
 const SEOUL_OFFSET = '+09:00';
 const SEOUL_TZ = 'Asia/Seoul';
-const TEAM_COMMUNICATION_PEOPLE = [
-  '스텐',
-  '주디',
-  '조나단',
-  '존',
-  '다나',
-  '스테이시',
-  '관리팀1',
-  '관리팀2',
-  '관리팀3',
-  '관리팀4',
-  '관리팀5',
-];
+const TEAM_COMMUNICATION_PEOPLE = ['스텐', '주디', '조나단', '존', '다나', '스테이시', '관리팀1', '관리팀2', '관리팀3', '관리팀4', '관리팀5'];
 const TODO_DEFAULT_ASSIGNEES = ['존', '주디', '스테이시', '다나', '조나단', '스텐'];
 const TODO_DELETE_PEOPLE = ['스텐', '존'];
 const TODO_DAILY_AUTO_TITLES = ['클리닉표 작성 및 확인', '반별 과제 안내'];
@@ -110,6 +98,13 @@ const CLINIC_DICTATION_GRADE_ALIASES = new Map([
 const CLINIC_LISTENING_SHEET_SYNC_MIN_VERSION = 3;
 const CLINIC_LISTENING_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_LISTENING_UPLOAD_MAX_BYTES || 100 * 1024 * 1024);
 const CLINIC_DICTATION_UPLOAD_MAX_BYTES = Number(process.env.CLINIC_DICTATION_UPLOAD_MAX_BYTES || 8 * 1024 * 1024);
+const CLINIC_DICTATION_NORMALIZE_HWAMOK_GRADE =
+  process.env.CLINIC_DICTATION_NORMALIZE_HWAMOK_GRADE !== 'false';
+const CLINIC_DICTATION_UPLOAD_MAX_COUNT = Number(process.env.CLINIC_DICTATION_UPLOAD_MAX_COUNT || 6);
+const CLINIC_DICTATION_UPLOAD_TOTAL_MAX_BYTES = Number(
+  process.env.CLINIC_DICTATION_UPLOAD_TOTAL_MAX_BYTES ||
+    CLINIC_DICTATION_UPLOAD_MAX_BYTES * CLINIC_DICTATION_UPLOAD_MAX_COUNT
+);
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_VOCABULARY_MODEL = process.env.OPENAI_VOCABULARY_MODEL || 'gpt-4.1-mini';
 const OPENAI_VOCABULARY_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_VOCABULARY_MAX_OUTPUT_TOKENS || 32000);
@@ -117,6 +112,16 @@ const OPENAI_WRITING_WORKSHEET_MODEL =
   process.env.OPENAI_WRITING_WORKSHEET_MODEL || OPENAI_VOCABULARY_MODEL;
 const OPENAI_WRITING_WORKSHEET_MAX_OUTPUT_TOKENS = Number(
   process.env.OPENAI_WRITING_WORKSHEET_MAX_OUTPUT_TOKENS || 12000
+);
+const OPENAI_REHEARSAL_MODEL =
+  process.env.OPENAI_REHEARSAL_MODEL || OPENAI_WRITING_WORKSHEET_MODEL;
+const OPENAI_REHEARSAL_MAX_OUTPUT_TOKENS = Number(
+  process.env.OPENAI_REHEARSAL_MAX_OUTPUT_TOKENS || 20000
+);
+const OPENAI_STATS_PREDICTION_MODEL =
+  process.env.OPENAI_STATS_PREDICTION_MODEL || OPENAI_WRITING_WORKSHEET_MODEL;
+const OPENAI_STATS_PREDICTION_MAX_OUTPUT_TOKENS = Number(
+  process.env.OPENAI_STATS_PREDICTION_MAX_OUTPUT_TOKENS || 1800
 );
 const UPLOAD_ROOT = process.env.UPLOAD_ROOT || path.join(__dirname, '..', 'uploads');
 const CLINIC_LISTENING_UPLOAD_DIR = path.join(UPLOAD_ROOT, 'clinic-listening');
@@ -130,11 +135,11 @@ const TODO_ALLOWED_ORIGINS = new Set([
   'http://127.0.0.1',
 ]);
 const DASHBOARD_ALLOWED_ORIGINS = new Set([
-  'https://daese8810.github.io',
   'https://daeseenglish.com',
   'https://www.daeseenglish.com',
   'https://daeseaca.com',
   'https://www.daeseaca.com',
+  'https://daese8810.github.io',
   'https://daeseaca.cafe24.com',
   'http://localhost',
   'http://127.0.0.1',
@@ -144,7 +149,34 @@ const DASHBOARD_STORAGE_KEYS = new Set([
   'exam-scores',
   'clinic-attendance-records',
   'clinic-table-results',
+  'clinic-roster-backups',
+  'clinic-table-backups',
+  'full-schedule-backups',
+  'assignment-kakao-link-backups',
+  'academy-calendar-backups',
+  'curriculum-plan-backups',
+  'daese-rehearsal-scope-library',
+  'daese-rehearsal-school-examples',
   '_utf8_health_check',
+]);
+const DASHBOARD_STORAGE_KEY_PATTERNS = [
+  /^clinic-file-v1-daese-rehearsal-scope-pdf-\d+-\d+-[0-9a-f]+$/i,
+];
+const TEACHER_PREFERENCES_STORAGE_KEY = 'teacher-preferences';
+const STUDENT_ROSTER_EDITS_PREFERENCE_KEY = '_clinic_student_roster_edits_v1';
+const CLINIC_TABLE_VISIBILITY_PREFERENCE_KEY = '_clinic_table_visibility_v1';
+const ATTENDANCE_RECORDS_PREFERENCE_KEY = '_clinic_attendance_records_v1';
+const ATTENDANCE_ABSENCE_REASONS_PREFERENCE_KEY =
+  '_clinic_attendance_absence_reasons_v1';
+const ATTENDANCE_HOMEWORK_MISSING_PREFERENCE_KEY =
+  '_clinic_attendance_homework_missing_v1';
+const ATTENDANCE_STATUS_NAMES = new Set(['present', 'late', 'absent']);
+const ATTENDANCE_HOMEWORK_CATEGORY_NAMES = new Set([
+  'grammar',
+  'reading',
+  'dictation',
+  'examPrep',
+  'other',
 ]);
 
 if (!DATABASE_URL) {
@@ -238,7 +270,7 @@ app.use('/api/clinic-dictation', (req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
-app.use('/api/clinic-dictation', express.json({ limit: '12mb' }));
+app.use('/api/clinic-dictation', express.json({ limit: '80mb' }));
 app.use('/api/dashboard-storage', (req, res, next) => {
   const origin = String(req.headers.origin || '');
   const originRoot = origin.replace(/:\d+$/, '');
@@ -246,12 +278,12 @@ app.use('/api/dashboard-storage', (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
-  res.setHeader('Access-Control-Allow-Methods', 'GET,PUT,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
-app.use('/api/dashboard-storage', express.json({ limit: '20mb' }));
+app.use('/api/dashboard-storage', express.json({ limit: '50mb' }));
 app.use('/api/supply-requests', (req, res, next) => {
   const origin = String(req.headers.origin || '');
   const originRoot = origin.replace(/:\d+$/, '');
@@ -373,6 +405,42 @@ app.use('/api/writing-worksheet', (req, res, next) => {
   next();
 });
 app.use('/api/writing-worksheet', express.json({ limit: '512kb' }));
+app.use('/api/stats-prediction', (req, res, next) => {
+  const origin = String(req.headers.origin || '');
+  const originRoot = origin.replace(/:\d+$/, '');
+  if (
+    TODO_ALLOWED_ORIGINS.has(origin) ||
+    TODO_ALLOWED_ORIGINS.has(originRoot) ||
+    DASHBOARD_ALLOWED_ORIGINS.has(origin) ||
+    DASHBOARD_ALLOWED_ORIGINS.has(originRoot)
+  ) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+app.use('/api/stats-prediction', express.json({ limit: '128kb' }));
+app.use('/api/daese-rehearsal', (req, res, next) => {
+  const origin = String(req.headers.origin || '');
+  const originRoot = origin.replace(/:\d+$/, '');
+  if (
+    TODO_ALLOWED_ORIGINS.has(origin) ||
+    TODO_ALLOWED_ORIGINS.has(originRoot) ||
+    DASHBOARD_ALLOWED_ORIGINS.has(origin) ||
+    DASHBOARD_ALLOWED_ORIGINS.has(originRoot)
+  ) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+app.use('/api/daese-rehearsal', express.json({ limit: '40mb' }));
 app.use('/uploads', express.static(UPLOAD_ROOT, {
   etag: true,
   maxAge: '7d',
@@ -457,6 +525,7 @@ function normalizeVocabularyWorkbookWords(raw) {
   return words;
 }
 
+
 function sanitizeWritingWorksheetText(value, maxLength = 1200) {
   return String(value || '').trim().replace(/\s+/g, ' ').slice(0, maxLength);
 }
@@ -482,6 +551,59 @@ function normalizeWritingWorksheetExerciseTypes(raw) {
     }
   }
   return result.length ? result : ['rearrange'];
+}
+
+function normalizeWritingWorksheetDifficultyCode(rawCode, rawLabel) {
+  const code = String(rawCode || '').trim();
+  if (['easy', 'standard', 'challenge'].includes(code)) {
+    return code;
+  }
+
+  const label = String(rawLabel || '').trim();
+  if (label === '기초') return 'easy';
+  if (label === '심화') return 'challenge';
+  return 'standard';
+}
+
+function writingWorksheetDifficultyInstruction(code) {
+  if (code === 'easy') {
+    return [
+      '기초: 짧은 단문 중심으로 만든다.',
+      '한 문장에는 핵심 문법 포인트를 1개만 넣는다.',
+      '어휘는 학생이 바로 배열할 수 있을 정도로 평이하게 고른다.',
+      'wrong/baseSentence/tip도 기본 형태 확인에 맞춘다.',
+    ].join(' ');
+  }
+  if (code === 'challenge') {
+    return [
+      '심화: 절, 수식어, 시간 표현, 전치사구 등으로 문장 구조를 더 길고 까다롭게 만든다.',
+      '한 문장에 핵심 문법 포인트와 보조 포인트를 함께 넣을 수 있다.',
+      '형태 변형과 누락 기능어를 헷갈리기 쉽게 설계하되 정답은 명확해야 한다.',
+      'wrong/baseSentence/tip은 학생이 왜 틀리는지 드러나게 만든다.',
+    ].join(' ');
+  }
+  return [
+    '표준: 교재 수준의 자연스러운 문장으로 만든다.',
+    '핵심 문법을 실제 문맥에 적용하게 한다.',
+    '문장 길이와 어휘 난도는 학교 시험 대비 표준 수준으로 유지한다.',
+  ].join(' ');
+}
+
+function writingWorksheetExerciseTypeInstruction(types) {
+  const lines = [];
+  if (types.includes('rearrange')) {
+    lines.push('rearrange: 단어를 그대로 배열해 완전한 문장을 만들 수 있는 sentence를 만든다.');
+  }
+  if (types.includes('rearrangeTransform')) {
+    lines.push('rearrangeTransform: 일부 단어의 시제, 수, 품사, 동사 형태를 바꿔야 정답이 되도록 sentence와 wrong을 만든다.');
+  }
+  if (types.includes('rearrangeAdd')) {
+    lines.push('rearrangeAdd: 관사, 전치사, 조동사, be동사, 접속사 같은 기능어 1개를 추가해야 정답이 되도록 sentence를 만든다.');
+  }
+  if (types.includes('rearrangeTransformAdd')) {
+    lines.push('rearrangeTransformAdd: 단어 형태 변형과 기능어 추가가 모두 필요하도록 sentence를 만든다.');
+  }
+  return lines.length ? lines.join(' ') : 'rearrange: 단어를 그대로 배열해 완전한 문장을 만들 수 있는 sentence를 만든다.';
 }
 
 function parseOpenAIJsonObject(text) {
@@ -519,8 +641,8 @@ function normalizeWritingWorksheetSentences(raw, limit) {
       wrong: sanitizeWritingWorksheetText(item.wrong, 240) || english,
       baseSentence: sanitizeWritingWorksheetText(item.baseSentence, 180) || english,
       expansionCondition: sanitizeWritingWorksheetText(item.expansionCondition, 200) ||
-        '핵심 문법을 사용해 문장을 더 정확하게 확장하기',
-      tip: sanitizeWritingWorksheetText(item.tip, 240) || '교재 범위의 핵심 문법을 확인합니다.',
+        '?? ??? ??? ??? ? ???? ????',
+      tip: sanitizeWritingWorksheetText(item.tip, 240) || '?? ??? ?? ??? ?????.',
     });
     if (result.length >= limit) break;
   }
@@ -543,6 +665,546 @@ function extractOpenAIResponseText(data) {
     }
   }
   return chunks.join('\n').trim();
+}
+
+function normalizeStatsPredictionNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(99999, Math.round(parsed)));
+}
+
+function normalizeStatsPredictionRate(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(2, parsed));
+}
+
+function normalizeStatsPredictionPopulation(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const elementary = normalizeStatsPredictionNumber(source.elementary);
+  const middle = normalizeStatsPredictionNumber(source.middle);
+  const high = normalizeStatsPredictionNumber(source.high);
+  return {
+    elementary,
+    middle,
+    high,
+    total: elementary + middle + high,
+  };
+}
+
+function normalizeStatsPredictionHorizon(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  return {
+    title: sanitizeWritingWorksheetText(source.title, 40),
+    rangeLabel: sanitizeWritingWorksheetText(source.rangeLabel, 80),
+    inquiry: normalizeStatsPredictionNumber(source.inquiry),
+    placement: normalizeStatsPredictionNumber(source.placement),
+    newStudent: normalizeStatsPredictionNumber(source.newStudent),
+    withdrawal: normalizeStatsPredictionNumber(source.withdrawal),
+    netChange: Math.max(-99999, Math.min(99999, Math.round(Number(source.netChange) || 0))),
+    population: normalizeStatsPredictionPopulation(source.population),
+    confidence: sanitizeWritingWorksheetText(source.confidence, 20),
+    confidenceDetail: sanitizeWritingWorksheetText(source.confidenceDetail, 240),
+  };
+}
+
+function normalizeStatsPredictionHorizons(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, 8).map(normalizeStatsPredictionHorizon);
+}
+
+function normalizeStatsWithdrawalRiskCandidate(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const reasons = Array.isArray(source.reasons)
+    ? source.reasons
+        .slice(0, 4)
+        .map((item) => sanitizeWritingWorksheetText(item, 120))
+        .filter(Boolean)
+    : [];
+  return {
+    studentName: sanitizeWritingWorksheetText(source.studentName, 40),
+    schoolLabel: sanitizeWritingWorksheetText(source.schoolLabel, 60),
+    className: sanitizeWritingWorksheetText(source.className, 80),
+    teacherName: sanitizeWritingWorksheetText(source.teacherName, 40),
+    score: normalizeStatsPredictionNumber(source.score),
+    riskLabel: sanitizeWritingWorksheetText(source.riskLabel, 20),
+    confidence: sanitizeWritingWorksheetText(source.confidence, 20),
+    reasons,
+  };
+}
+
+function normalizeStatsWithdrawalRiskCandidates(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, 8)
+    .map(normalizeStatsWithdrawalRiskCandidate)
+    .filter((item) => item.studentName);
+}
+
+function normalizeStatsPredictionPayload(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const rates = source.conversionRates && typeof source.conversionRates === 'object'
+    ? source.conversionRates
+    : {};
+  return {
+    fingerprint: sanitizeWritingWorksheetText(source.fingerprint, 120),
+    teacher: sanitizeWritingWorksheetText(source.teacher, 40),
+    algorithmVersion: normalizeStatsPredictionNumber(source.algorithmVersion, 1),
+    sourceMonthCount: normalizeStatsPredictionNumber(source.sourceMonthCount),
+    hasMonthOnlyInquiry: source.hasMonthOnlyInquiry === true,
+    currentPopulation: normalizeStatsPredictionPopulation(source.currentPopulation),
+    conversionRates: {
+      placementPerInquiry: normalizeStatsPredictionRate(rates.placementPerInquiry),
+      newStudentPerInquiry: normalizeStatsPredictionRate(rates.newStudentPerInquiry),
+    },
+    nextFourWeeks: normalizeStatsPredictionHorizon(source.nextFourWeeks),
+    nextMonth: normalizeStatsPredictionHorizon(source.nextMonth),
+    weeklyForecasts: normalizeStatsPredictionHorizons(source.weeklyForecasts),
+    nextFourWeeksTotal: normalizeStatsPredictionHorizon(source.nextFourWeeksTotal),
+    withdrawalRiskCandidates: normalizeStatsWithdrawalRiskCandidates(source.withdrawalRiskCandidates),
+    notes: sanitizeWritingWorksheetText(source.notes, 500),
+  };
+}
+
+function sanitizeDaeseRehearsalText(value, maxLength = 60000) {
+  return String(value || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim()
+    .slice(0, maxLength);
+}
+
+const DAESE_REHEARSAL_ACTUAL_FILE_MAX_COUNT = 15;
+const DAESE_REHEARSAL_ACTUAL_FILE_MAX_TOTAL_BYTES = 25 * 1024 * 1024;
+const DAESE_REHEARSAL_SCOPE_PDF_MAX_BYTES = 25 * 1024 * 1024;
+const DAESE_REHEARSAL_IMAGE_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+]);
+const DAESE_REHEARSAL_FILE_MIME_TYPES = new Set(['application/pdf']);
+
+function dataUrlParts(value) {
+  const text = String(value || '').trim();
+  const match = /^data:([^;,]+)?;base64,([A-Za-z0-9+/=\s]+)$/s.exec(text);
+  if (!match) return null;
+  const mimeType = String(match[1] || '').trim().toLowerCase();
+  const base64 = String(match[2] || '').replace(/\s+/g, '');
+  if (!mimeType || !base64) return null;
+  return { mimeType, base64, dataUrl: `data:${mimeType};base64,${base64}` };
+}
+
+function base64ByteLength(base64) {
+  const normalized = String(base64 || '').replace(/\s+/g, '');
+  if (!normalized) return 0;
+  const padding = normalized.endsWith('==') ? 2 : normalized.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((normalized.length * 3) / 4) - padding);
+}
+
+function normalizeDaeseRehearsalActualFiles(raw) {
+  if (!Array.isArray(raw)) return { files: [] };
+
+  const files = [];
+  let totalBytes = 0;
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    if (files.length >= DAESE_REHEARSAL_ACTUAL_FILE_MAX_COUNT) {
+      return {
+        errorStatus: 413,
+        errorMessage: 'Past-exam file upload limit is 15 files.',
+      };
+    }
+
+    const parsed = dataUrlParts(item.dataUrl);
+    if (!parsed) {
+      return {
+        errorStatus: 400,
+        errorMessage: 'Past-exam files must be Base64 data URLs.',
+      };
+    }
+    const declaredMime = sanitizeDaeseRehearsalText(item.mimeType, 80)
+      .toLowerCase();
+    const mimeType = declaredMime || parsed.mimeType;
+    if (
+      mimeType !== parsed.mimeType ||
+      (!DAESE_REHEARSAL_IMAGE_MIME_TYPES.has(mimeType) &&
+        !DAESE_REHEARSAL_FILE_MIME_TYPES.has(mimeType))
+    ) {
+      return {
+        errorStatus: 400,
+        errorMessage: 'Only PNG, JPEG, WEBP images and PDF files are supported.',
+      };
+    }
+
+    const bytes = base64ByteLength(parsed.base64);
+    totalBytes += bytes;
+    if (totalBytes > DAESE_REHEARSAL_ACTUAL_FILE_MAX_TOTAL_BYTES) {
+      return {
+        errorStatus: 413,
+        errorMessage: 'Past-exam files must be 25 MB or less in total.',
+      };
+    }
+
+    const name =
+      sanitizeDaeseRehearsalText(item.name, 180) ||
+      (mimeType === 'application/pdf'
+        ? `past-exam-${files.length + 1}.pdf`
+        : `past-exam-${files.length + 1}.jpg`);
+    files.push({
+      name,
+      mimeType,
+      dataUrl: parsed.dataUrl,
+      base64: parsed.base64,
+      bytes,
+    });
+  }
+  return { files };
+}
+
+function normalizeDaeseRehearsalScopePdfFile(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return {
+      errorStatus: 400,
+      errorMessage: 'A middle-school textbook unit PDF file is required.',
+    };
+  }
+
+  const parsed = dataUrlParts(raw.dataUrl);
+  if (!parsed) {
+    return {
+      errorStatus: 400,
+      errorMessage: 'The textbook unit PDF must be a Base64 data URL.',
+    };
+  }
+  const declaredMime = sanitizeDaeseRehearsalText(raw.mimeType, 80)
+    .toLowerCase();
+  const mimeType = declaredMime || parsed.mimeType;
+  if (mimeType !== 'application/pdf' || parsed.mimeType !== 'application/pdf') {
+    return {
+      errorStatus: 400,
+      errorMessage: 'Only PDF files are supported for textbook unit analysis.',
+    };
+  }
+
+  const bytes = base64ByteLength(parsed.base64);
+  if (bytes <= 0 || bytes > DAESE_REHEARSAL_SCOPE_PDF_MAX_BYTES) {
+    return {
+      errorStatus: 413,
+      errorMessage: 'The textbook unit PDF must be 25 MB or less.',
+    };
+  }
+
+  return {
+    file: {
+      name:
+        sanitizeDaeseRehearsalText(raw.name, 180) ||
+        'middle-school-textbook-unit.pdf',
+      mimeType,
+      dataUrl: parsed.dataUrl,
+      base64: parsed.base64,
+      bytes,
+    },
+  };
+}
+
+function daeseRehearsalFileInputContent(files) {
+  const result = [];
+  for (const file of files) {
+    if (DAESE_REHEARSAL_IMAGE_MIME_TYPES.has(file.mimeType)) {
+      result.push({
+        type: 'input_image',
+        image_url: file.dataUrl,
+        detail: 'high',
+      });
+    } else if (file.mimeType === 'application/pdf') {
+      result.push({
+        type: 'input_file',
+        filename: file.name,
+        file_data: file.dataUrl,
+      });
+    }
+  }
+  return result;
+}
+
+function normalizeDaeseRehearsalList(value, maxItems = 10, maxLength = 500) {
+  const source = Array.isArray(value) ? value : String(value || '').split(/\n+/);
+  const result = [];
+  for (const item of source) {
+    const text = sanitizeDaeseRehearsalText(item, maxLength).replace(/\s+/g, ' ');
+    if (!text) continue;
+    result.push(text);
+    if (result.length >= maxItems) break;
+  }
+  return result;
+}
+
+const DAESE_REHEARSAL_ANALYSIS_KEYS = [
+  'passageSelection',
+  'transformationPatterns',
+  'preferredQuestionTypes',
+  'intentPatterns',
+  'distractorPatterns',
+  'studentTrapPatterns',
+  'answerEvidencePatterns',
+  'passagePositionPatterns',
+  'choiceDesignPatterns',
+  'subjectivePatterns',
+  'scopeBlendingPatterns',
+  'difficultyPatterns',
+  'teacherHabits',
+  'lowPriorityPatterns',
+  'nextScopeRules',
+  'confidenceNotes',
+];
+
+const DAESE_REHEARSAL_ANALYSIS_LABELS = {
+  passageSelection: '출제된 지문/문장 선택 기준',
+  transformationPatterns: '변형된 문장이나 표현과 변형 방식',
+  preferredQuestionTypes: '선호 문제 유형',
+  intentPatterns: '출제 의도',
+  distractorPatterns: '오답 선택지 제작 방식',
+  studentTrapPatterns: '학생 실수 유도 포인트',
+  answerEvidencePatterns: '정답 근거 위치와 근거 거리',
+  passagePositionPatterns: '지문 내 출제 위치 패턴',
+  choiceDesignPatterns: '보기 구성 방식',
+  subjectivePatterns: '서술형 출제 방식',
+  scopeBlendingPatterns: '교과서/부교재/여러 지문 결합 방식',
+  difficultyPatterns: '난이도 조절 방식',
+  teacherHabits: '반복되는 선생님 특유의 출제 습관',
+  lowPriorityPatterns: '출제 제외 또는 낮은 우선순위 경향',
+  nextScopeRules: '다음 시험범위에 적용할 출제 예측 규칙',
+  confidenceNotes: '분석 신뢰도와 근거 부족 항목',
+};
+
+const DAESE_REHEARSAL_SCOPE_ANALYSIS_KEYS = [
+  'unitOverview',
+  'passages',
+  'dialogues',
+  'grammarPoints',
+  'vocabulary',
+  'keyExpressions',
+  'keySentences',
+  'examPointCandidates',
+  'questionGenerationRules',
+  'confidenceNotes',
+];
+
+function normalizeDaeseRehearsalAnalysis(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const result = {};
+  for (const key of DAESE_REHEARSAL_ANALYSIS_KEYS) {
+    result[key] = normalizeDaeseRehearsalList(source[key], 12, 900);
+  }
+  return result;
+}
+
+function hasDaeseRehearsalAnalysis(value) {
+  const analysis = normalizeDaeseRehearsalAnalysis(value);
+  return DAESE_REHEARSAL_ANALYSIS_KEYS.some((key) => analysis[key].length > 0);
+}
+
+function normalizeDaeseRehearsalScopeAnalysis(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const result = {};
+  for (const key of DAESE_REHEARSAL_SCOPE_ANALYSIS_KEYS) {
+    result[key] = normalizeDaeseRehearsalList(source[key], 18, 900);
+  }
+  return result;
+}
+
+function hasDaeseRehearsalScopeAnalysis(value) {
+  const analysis = normalizeDaeseRehearsalScopeAnalysis(value);
+  return DAESE_REHEARSAL_SCOPE_ANALYSIS_KEYS.some((key) => analysis[key].length > 0);
+}
+
+function formatDaeseRehearsalAnalysis(value) {
+  const analysis = normalizeDaeseRehearsalAnalysis(value);
+  const lines = [];
+  for (const key of DAESE_REHEARSAL_ANALYSIS_KEYS) {
+    const items = analysis[key];
+    if (!items.length) continue;
+    lines.push(`${DAESE_REHEARSAL_ANALYSIS_LABELS[key] || key}:`);
+    for (const item of items) {
+      lines.push(`- ${item}`);
+    }
+  }
+  return lines.length ? lines.join('\n') : 'No stored past-exam analysis was supplied.';
+}
+
+function normalizeDaeseRehearsalExamples(raw) {
+  if (!Array.isArray(raw)) return [];
+  const result = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const semester = sanitizeDaeseRehearsalText(item.semester || item.term, 80);
+    const examType = sanitizeDaeseRehearsalText(item.examType || item.examName, 120);
+    const example = {
+      year: sanitizeDaeseRehearsalText(item.year, 20),
+      school: sanitizeDaeseRehearsalText(item.school, 80),
+      grade: sanitizeDaeseRehearsalText(item.grade, 40),
+      semester,
+      examType,
+      term: sanitizeDaeseRehearsalText(item.term || semester, 80),
+      examName: sanitizeDaeseRehearsalText(item.examName || examType, 120),
+      scopeText: sanitizeDaeseRehearsalText(item.scopeText, 12000),
+      actualQuestions: sanitizeDaeseRehearsalText(item.actualQuestions, 20000),
+      actualAnswers: sanitizeDaeseRehearsalText(item.actualAnswers, 12000),
+      analysis: normalizeDaeseRehearsalAnalysis(item.analysis),
+    };
+    if (!example.scopeText || (!example.actualQuestions && !hasDaeseRehearsalAnalysis(example.analysis))) continue;
+    result.push(example);
+    if (result.length >= 8) break;
+  }
+  return result;
+}
+
+function normalizeDaeseRehearsalChoiceText(value) {
+  let text = sanitizeDaeseRehearsalText(value, 500).replace(/\s+/g, ' ').trim();
+  text = text.replace(/^\s*(?:\d+[\.)]|\(\d+\)|\[\d+\])\s*/, '').trim();
+  if (text.length > 0) {
+    const first = text.codePointAt(0);
+    if (first >= 0x2460 && first <= 0x2473) {
+      text = text.slice(String.fromCodePoint(first).length).trimStart();
+    }
+  }
+  while (text.endsWith('.') && !/(?:[A-Za-z]\.){2,}$/.test(text) && !/\b(?:Mr|Mrs|Ms|Dr|Prof|St|No|vs)\.$/.test(text)) {
+    text = text.slice(0, -1).trimEnd();
+  }
+  return text;
+}
+
+function normalizeDaeseRehearsalKoreanPrompt(value) {
+  const text = sanitizeDaeseRehearsalText(value, 1200).replace(/\s+/g, ' ').trim();
+  if (!text) return text;
+  if (/[?-?]/.test(text)) return text;
+  const lower = text.toLowerCase();
+  if (/what is the main (point|idea|topic|focus)|main point|main idea|main topic/.test(lower)) {
+    return '?? ?? ??? ?? ??? ???';
+  }
+  if (/underlined reference.*different|different.*referent/.test(lower)) {
+    return '?? ? ?? ? ???? ??? ???? ?? ???';
+  }
+  if (/grammatically incorrect|underlined part.*incorrect/.test(lower)) {
+    return '?? ? ?? ? ??? ?? ???';
+  }
+  if (/used incorrectly in context|underlined word.*incorrect/.test(lower)) {
+    return '?? ? ??? ??? ??? ???? ?? ???';
+  }
+  if (/complete.*sentence|best completes/.test(lower)) {
+    return '??? ??? ?? ?? ??? ???';
+  }
+  if (/most likely mean|meaning of the underlined/.test(lower)) {
+    return '?? ? ??? ??? ?? ??? ???';
+  }
+  if (/correct order|order of the following/.test(lower)) {
+    return '??? ???? ?? ??? ?? ??? ???';
+  }
+  if (/unrelated to the overall flow|unrelated sentence/.test(lower)) {
+    return '?? ??? ???? ????';
+  }
+  if (/where does the sentence|fit best/.test(lower)) {
+    return '??? ??? ??? ??? ?? ??? ???';
+  }
+  return text;
+}
+
+
+
+function normalizeDaeseRehearsalObjectiveQuestions(raw, count) {
+  const source = Array.isArray(raw) ? raw : [];
+  const result = [];
+  for (const item of source) {
+    if (!item || typeof item !== 'object') continue;
+    const choices = normalizeDaeseRehearsalList(item.choices, 8, 500)
+      .map(normalizeDaeseRehearsalChoiceText)
+      .filter(Boolean);
+    const question = normalizeDaeseRehearsalKoreanPrompt(item.question);
+    if (!question || choices.length < 2) continue;
+    const number = Number.parseInt(String(item.number || result.length + 1), 10) || result.length + 1;
+    const answerIndexRaw = Number.parseInt(String(item.answerIndex || '1'), 10);
+    const answerIndex = Math.min(Math.max(answerIndexRaw || 1, 1), choices.length);
+    result.push({
+      number,
+      passage: sanitizeDaeseRehearsalText(item.passage, 5000),
+      question,
+      choices,
+      answerIndex,
+      answer: normalizeDaeseRehearsalChoiceText(item.answer) || choices[answerIndex - 1],
+      explanation: sanitizeDaeseRehearsalText(item.explanation, 1600),
+      sourceHint: sanitizeDaeseRehearsalText(item.sourceHint, 300),
+    });
+    if (result.length >= count) break;
+  }
+  return result;
+}
+
+
+function normalizeDaeseRehearsalSubjectiveQuestions(raw, count, offset) {
+  const source = Array.isArray(raw) ? raw : [];
+  const result = [];
+  for (const item of source) {
+    if (!item || typeof item !== 'object') continue;
+    const prompt = normalizeDaeseRehearsalKoreanPrompt(item.prompt);
+    const answer = sanitizeDaeseRehearsalText(item.answer, 1600);
+    if (!prompt || !answer) continue;
+    const number = Number.parseInt(String(item.number || offset + result.length + 1), 10) || offset + result.length + 1;
+    result.push({
+      number,
+      prompt,
+      answer,
+      explanation: sanitizeDaeseRehearsalText(item.explanation, 1600),
+      scoringGuide: sanitizeDaeseRehearsalText(item.scoringGuide, 1600),
+      sourceHint: sanitizeDaeseRehearsalText(item.sourceHint, 300),
+    });
+    if (result.length >= count) break;
+  }
+  return result;
+}
+
+function normalizeDaeseRehearsalGeneratedExam(parsed, payload) {
+  const source = parsed && typeof parsed === 'object' ? parsed : {};
+  const objectiveQuestions = normalizeDaeseRehearsalObjectiveQuestions(
+    source.objectiveQuestions,
+    payload.objectiveCount
+  );
+  const subjectiveQuestions = normalizeDaeseRehearsalSubjectiveQuestions(
+    source.subjectiveQuestions,
+    payload.subjectiveCount,
+    objectiveQuestions.length
+  );
+  if (objectiveQuestions.length !== payload.objectiveCount || subjectiveQuestions.length !== payload.subjectiveCount) {
+    return null;
+  }
+  const generatedAnswerKey = [
+    ...objectiveQuestions.map((question) => ({
+      number: question.number,
+      answer: question.answer,
+      explanation: question.explanation,
+    })),
+    ...subjectiveQuestions.map((question) => ({
+      number: question.number,
+      answer: question.answer,
+      explanation: question.explanation || question.scoringGuide,
+    })),
+  ];
+  const rawAnswerKey = Array.isArray(source.answerKey) ? source.answerKey : [];
+  const answerKey = rawAnswerKey.length
+    ? rawAnswerKey.map((item, index) => ({
+        number: Number.parseInt(String(item && item.number || index + 1), 10) || index + 1,
+        answer: sanitizeDaeseRehearsalText(item && item.answer, 1200),
+        explanation: sanitizeDaeseRehearsalText(item && item.explanation, 1600),
+      })).filter((item) => item.answer)
+    : generatedAnswerKey;
+  return {
+    title: sanitizeDaeseRehearsalText(source.title, 180) || `${payload.school} Rehearsal Exam`,
+    subtitle: sanitizeDaeseRehearsalText(source.subtitle, 240) || [payload.year, payload.grade, payload.semester || payload.term, payload.examType || payload.examName, payload.rehearsalRound].filter(Boolean).join(' / '),
+    trendSummary: normalizeDaeseRehearsalList(source.trendSummary, 8, 500),
+    qualityChecks: normalizeDaeseRehearsalList(source.qualityChecks, 8, 500),
+    objectiveQuestions,
+    subjectiveQuestions,
+    answerKey: answerKey.length ? answerKey : generatedAnswerKey,
+  };
 }
 
 function sanitizeSupplyRequestText(value, maxLength = 500) {
@@ -698,6 +1360,7 @@ async function sendSupplyRequestKakaoWorkMessageByEmail({ email, text }) {
   }
 }
 
+
 function buildReferralDiscountMessage(payload) {
   const student = [
     payload.school || '',
@@ -750,6 +1413,7 @@ async function sendReferralDiscountKakaoWorkMessageByEmail({ email, text }) {
     clearTimeout(timeout);
   }
 }
+
 
 function buildStudentIdentity(payload) {
   return [
@@ -918,8 +1582,7 @@ function addDays(dateStr, amount) {
   dt.setUTCDate(dt.getUTCDate() + amount);
   return dt.toISOString().slice(0, 10);
 }
-
-const KOREAN_WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
+const KOREAN_WEEKDAY_LABELS = ['\uC77C', '\uC6D4', '\uD654', '\uC218', '\uBAA9', '\uAE08', '\uD1A0'];
 
 function formatReservationNoticeDate(dateStr) {
   const date = String(dateStr || '').trim();
@@ -1026,7 +1689,11 @@ function canDeleteClinicDictationAttempt(name) {
 }
 
 function isValidDashboardStorageKey(key) {
-  return DASHBOARD_STORAGE_KEYS.has(String(key || '').trim());
+  const normalized = String(key || '').trim();
+  return (
+    DASHBOARD_STORAGE_KEYS.has(normalized) ||
+    DASHBOARD_STORAGE_KEY_PATTERNS.some((pattern) => pattern.test(normalized))
+  );
 }
 
 function isValidDashboardStorageJsonText(jsonText) {
@@ -1048,6 +1715,474 @@ function isValidDashboardStorageJsonText(jsonText) {
   } catch (_) {
     return false;
   }
+}
+
+function dashboardStorageJsonToObject(jsonText) {
+  const text = String(jsonText || '').trim() || '{}';
+  const parseObject = (raw) => {
+    const parsed = JSON.parse(String(raw || '').trim() || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  };
+
+  try {
+    const parsed = parseObject(text);
+    if (
+      parsed.__encoding === 'base64:utf8-json' &&
+      typeof parsed.payload === 'string'
+    ) {
+      const decoded = Buffer.from(parsed.payload.trim(), 'base64').toString('utf8');
+      if (!decoded.includes('\uFFFD')) {
+        return parseObject(decoded);
+      }
+    }
+    return parsed;
+  } catch (_) {
+    // The dashboard may store UTF-8 JSON as plain Base64.
+  }
+
+  const decoded = Buffer.from(text, 'base64').toString('utf8');
+  if (!decoded || decoded.includes('\uFFFD')) {
+    throw new Error('INVALID_DASHBOARD_STORAGE_JSON');
+  }
+  return parseObject(decoded);
+}
+
+function dashboardStorageObjectToBase64(value) {
+  const payload = value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : {};
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
+}
+
+function currentKoreaDateKey(now = new Date()) {
+  return new Date(now.getTime() + 9 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+function normalizeRosterActiveStatusReservation(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const targetIsActive = value.targetIsActive;
+  const effectiveDate = String(value.effectiveDate || '').trim();
+  if (
+    typeof targetIsActive !== 'boolean' ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)
+  ) {
+    return null;
+  }
+  return { targetIsActive, effectiveDate };
+}
+
+function normalizeClinicTableStatusReservation(value, fallbackClassKey = '') {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const targetIsActive = value.targetIsActive;
+  const classKey = String(value.classKey || fallbackClassKey || '').trim();
+  const legacyClassKey = String(value.legacyClassKey || '').trim();
+  const effectiveDate = String(value.effectiveDate || '').trim();
+  if (
+    typeof targetIsActive !== 'boolean' ||
+    !classKey ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)
+  ) {
+    return null;
+  }
+  return { classKey, legacyClassKey, targetIsActive, effectiveDate };
+}
+
+function applyDueRosterActiveStatusReservationsToPreferences(
+  preferences,
+  todayKey = currentKoreaDateKey()
+) {
+  if (!preferences || typeof preferences !== 'object' || Array.isArray(preferences)) {
+    return 0;
+  }
+  const rosterClasses = preferences[STUDENT_ROSTER_EDITS_PREFERENCE_KEY];
+  if (!Array.isArray(rosterClasses)) {
+    return 0;
+  }
+
+  let appliedCount = 0;
+  const nextRosterClasses = rosterClasses.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return entry;
+    }
+    const reservation = normalizeRosterActiveStatusReservation(
+      entry.activeStatusReservation
+    );
+    if (!reservation || reservation.effectiveDate > todayKey) {
+      return entry;
+    }
+    const nextEntry = {
+      ...entry,
+      isActive: reservation.targetIsActive,
+    };
+    delete nextEntry.activeStatusReservation;
+    appliedCount += 1;
+    return nextEntry;
+  });
+
+  if (appliedCount > 0) {
+    preferences[STUDENT_ROSTER_EDITS_PREFERENCE_KEY] = nextRosterClasses;
+  }
+  return appliedCount;
+}
+
+function applyDueClinicTableStatusReservationsToPreferences(
+  preferences,
+  todayKey = currentKoreaDateKey()
+) {
+  if (!preferences || typeof preferences !== 'object' || Array.isArray(preferences)) {
+    return 0;
+  }
+  const visibility = preferences[CLINIC_TABLE_VISIBILITY_PREFERENCE_KEY];
+  if (!visibility || typeof visibility !== 'object' || Array.isArray(visibility)) {
+    return 0;
+  }
+
+  const rawReservations = visibility.statusReservations;
+  if (!rawReservations || typeof rawReservations !== 'object' || Array.isArray(rawReservations)) {
+    return 0;
+  }
+
+  const hiddenKeys = new Set();
+  const rawHiddenKeys = Array.isArray(visibility.hiddenClassKeys)
+    ? visibility.hiddenClassKeys
+    : Array.isArray(visibility.hiddenClasses)
+      ? visibility.hiddenClasses
+      : [];
+  for (const item of rawHiddenKeys) {
+    const key = String(item || '').trim();
+    if (key) hiddenKeys.add(key);
+  }
+
+  const nextReservations = {};
+  let appliedCount = 0;
+  for (const [fallbackClassKey, rawReservation] of Object.entries(rawReservations)) {
+    const reservation = normalizeClinicTableStatusReservation(
+      rawReservation,
+      fallbackClassKey
+    );
+    if (!reservation) {
+      continue;
+    }
+    if (reservation.effectiveDate > todayKey) {
+      nextReservations[reservation.classKey] = rawReservation;
+      continue;
+    }
+
+    if (reservation.targetIsActive) {
+      hiddenKeys.delete(reservation.classKey);
+      if (reservation.legacyClassKey) {
+        hiddenKeys.delete(reservation.legacyClassKey);
+      }
+    } else {
+      hiddenKeys.add(reservation.classKey);
+    }
+    appliedCount += 1;
+  }
+
+  if (appliedCount > 0) {
+    visibility.hiddenClassKeys = Array.from(hiddenKeys).sort();
+    delete visibility.hiddenClasses;
+    if (Object.keys(nextReservations).length > 0) {
+      visibility.statusReservations = nextReservations;
+    } else {
+      delete visibility.statusReservations;
+    }
+    preferences[CLINIC_TABLE_VISIBILITY_PREFERENCE_KEY] = visibility;
+  }
+  return appliedCount;
+}
+
+async function applyDueRosterActiveStatusReservations() {
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT storage_key, json_text, updated_at
+         FROM dashboard_storage
+        WHERE storage_key = $1
+        FOR UPDATE`,
+      [TEACHER_PREFERENCES_STORAGE_KEY]
+    );
+    const preferences = dashboardStorageJsonToObject(rows[0]?.json_text || '{}');
+    const rosterAppliedCount =
+      applyDueRosterActiveStatusReservationsToPreferences(preferences);
+    const clinicTableAppliedCount =
+      applyDueClinicTableStatusReservationsToPreferences(preferences);
+    const appliedCount = rosterAppliedCount + clinicTableAppliedCount;
+
+    if (appliedCount > 0) {
+      const nextJsonText = dashboardStorageObjectToBase64(preferences);
+      await client.query(
+        `INSERT INTO dashboard_storage (storage_key, json_text, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (storage_key)
+         DO UPDATE SET json_text = EXCLUDED.json_text,
+                       updated_at = NOW()`,
+        [TEACHER_PREFERENCES_STORAGE_KEY, nextJsonText]
+      );
+    }
+
+    await client.query('COMMIT');
+    if (appliedCount > 0) {
+      console.log(
+        `반/클리닉표 활성 상태 예약 ${appliedCount}건을 적용했습니다. ` +
+        `(인원명단 ${rosterAppliedCount}건, 클리닉표 ${clinicTableAppliedCount}건)`
+      );
+    }
+    return appliedCount;
+  } catch (error) {
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (_) {}
+    }
+    console.error('인원명단 반 활성 상태 예약 적용 실패:', error);
+    return 0;
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+}
+
+function normalizeAttendanceRecordsByDate(value) {
+  const records = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return records;
+  }
+
+  for (const [dateKeyRaw, rawDailyRecords] of Object.entries(value)) {
+    const dateKey = String(dateKeyRaw || '').trim();
+    if (!dateKey || !rawDailyRecords || typeof rawDailyRecords !== 'object' || Array.isArray(rawDailyRecords)) {
+      continue;
+    }
+    const dailyRecords = {};
+    for (const [recordKeyRaw, statusRaw] of Object.entries(rawDailyRecords)) {
+      const recordKey = String(recordKeyRaw || '').trim();
+      const status = String(statusRaw || '').trim();
+      if (recordKey && ATTENDANCE_STATUS_NAMES.has(status)) {
+        dailyRecords[recordKey] = status;
+      }
+    }
+    if (Object.keys(dailyRecords).length > 0) {
+      records[dateKey] = dailyRecords;
+    }
+  }
+  return records;
+}
+
+function normalizeAttendanceTextRecordsByDate(value) {
+  const records = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return records;
+  }
+
+  for (const [dateKeyRaw, rawDailyRecords] of Object.entries(value)) {
+    const dateKey = String(dateKeyRaw || '').trim();
+    if (!dateKey || !rawDailyRecords || typeof rawDailyRecords !== 'object' || Array.isArray(rawDailyRecords)) {
+      continue;
+    }
+    const dailyRecords = {};
+    for (const [recordKeyRaw, textRaw] of Object.entries(rawDailyRecords)) {
+      const recordKey = String(recordKeyRaw || '').trim();
+      const text = String(textRaw || '').trim();
+      if (recordKey && text) {
+        dailyRecords[recordKey] = text;
+      }
+    }
+    if (Object.keys(dailyRecords).length > 0) {
+      records[dateKey] = dailyRecords;
+    }
+  }
+  return records;
+}
+
+function normalizeAttendanceHomeworkMissingRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const categories = [];
+  const rawCategories = Array.isArray(value.categories) ? value.categories : [];
+  for (const categoryRaw of rawCategories) {
+    const category = String(categoryRaw || '').trim();
+    if (ATTENDANCE_HOMEWORK_CATEGORY_NAMES.has(category) && !categories.includes(category)) {
+      categories.push(category);
+    }
+  }
+  const otherText = String(value.otherText || '').trim().slice(0, 1000);
+  if (otherText && !categories.includes('other')) {
+    categories.push('other');
+  }
+  if (categories.length === 0) {
+    return null;
+  }
+  return { categories, otherText };
+}
+
+function normalizeAttendanceHomeworkMissingByDate(value) {
+  const records = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return records;
+  }
+
+  for (const [dateKeyRaw, rawDailyRecords] of Object.entries(value)) {
+    const dateKey = String(dateKeyRaw || '').trim();
+    if (!dateKey || !rawDailyRecords || typeof rawDailyRecords !== 'object' || Array.isArray(rawDailyRecords)) {
+      continue;
+    }
+    const dailyRecords = {};
+    for (const [recordKeyRaw, rawHomeworkMissing] of Object.entries(rawDailyRecords)) {
+      const recordKey = String(recordKeyRaw || '').trim();
+      const homeworkMissing = normalizeAttendanceHomeworkMissingRecord(rawHomeworkMissing);
+      if (recordKey && homeworkMissing) {
+        dailyRecords[recordKey] = homeworkMissing;
+      }
+    }
+    if (Object.keys(dailyRecords).length > 0) {
+      records[dateKey] = dailyRecords;
+    }
+  }
+  return records;
+}
+
+function normalizeAttendanceMutations(body) {
+  const dateKey = String(body?.dateKey || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+    const error = new Error('INVALID_ATTENDANCE_DATE');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const rawChanges = Array.isArray(body?.changes) ? body.changes : [];
+  if (rawChanges.length === 0 || rawChanges.length > 300) {
+    const error = new Error('INVALID_ATTENDANCE_CHANGES');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const changes = rawChanges.map((change) => {
+    const recordKey = String(change?.recordKey || '').trim();
+    if (!recordKey || recordKey.length > 500) {
+      const error = new Error('INVALID_ATTENDANCE_RECORD_KEY');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const rawStatus = change?.status;
+    const status = rawStatus == null || String(rawStatus).trim().isEmpty
+      ? null
+      : String(rawStatus).trim();
+    if (status !== null && !ATTENDANCE_STATUS_NAMES.has(status)) {
+      const error = new Error('INVALID_ATTENDANCE_STATUS');
+      error.statusCode = 400;
+      throw error;
+    }
+    const homeworkMissingProvided = Object.prototype.hasOwnProperty.call(
+      change || {},
+      'homeworkMissing'
+    );
+    const homeworkMissing = homeworkMissingProvided
+      ? normalizeAttendanceHomeworkMissingRecord(change.homeworkMissing)
+      : null;
+
+    return {
+      recordKey,
+      status,
+      absenceReason: String(change?.absenceReason || '').trim().slice(0, 1000),
+      homeworkMissingProvided,
+      homeworkMissing,
+    };
+  });
+
+  return { dateKey, changes };
+}
+
+function applyAttendanceMutations(preferences, dateKey, changes) {
+  const attendanceRecords = normalizeAttendanceRecordsByDate(
+    preferences[ATTENDANCE_RECORDS_PREFERENCE_KEY]
+  );
+  const absenceReasons = normalizeAttendanceTextRecordsByDate(
+    preferences[ATTENDANCE_ABSENCE_REASONS_PREFERENCE_KEY]
+  );
+  const homeworkMissing = normalizeAttendanceHomeworkMissingByDate(
+    preferences[ATTENDANCE_HOMEWORK_MISSING_PREFERENCE_KEY]
+  );
+  const dailyRecords = { ...(attendanceRecords[dateKey] || {}) };
+  const dailyReasons = { ...(absenceReasons[dateKey] || {}) };
+  const dailyHomeworkMissing = { ...(homeworkMissing[dateKey] || {}) };
+
+  for (const change of changes) {
+    if (change.status === null) {
+      delete dailyRecords[change.recordKey];
+      delete dailyReasons[change.recordKey];
+      delete dailyHomeworkMissing[change.recordKey];
+      continue;
+    }
+
+    dailyRecords[change.recordKey] = change.status;
+    if (change.status === 'absent' && change.absenceReason) {
+      dailyReasons[change.recordKey] = change.absenceReason;
+    } else {
+      delete dailyReasons[change.recordKey];
+    }
+    if (change.status === 'absent') {
+      delete dailyHomeworkMissing[change.recordKey];
+    } else if (change.homeworkMissingProvided) {
+      if (change.homeworkMissing) {
+        dailyHomeworkMissing[change.recordKey] = change.homeworkMissing;
+      } else {
+        delete dailyHomeworkMissing[change.recordKey];
+      }
+    }
+  }
+
+  for (const [recordKey, reason] of Object.entries({ ...dailyReasons })) {
+    if (dailyRecords[recordKey] !== 'absent' || !String(reason || '').trim()) {
+      delete dailyReasons[recordKey];
+    }
+  }
+  for (const [recordKey, homework] of Object.entries({ ...dailyHomeworkMissing })) {
+    if (
+      !['present', 'late'].includes(dailyRecords[recordKey]) ||
+      !normalizeAttendanceHomeworkMissingRecord(homework)
+    ) {
+      delete dailyHomeworkMissing[recordKey];
+    }
+  }
+
+  if (Object.keys(dailyRecords).length > 0) {
+    attendanceRecords[dateKey] = dailyRecords;
+  } else {
+    delete attendanceRecords[dateKey];
+  }
+  if (Object.keys(dailyReasons).length > 0) {
+    absenceReasons[dateKey] = dailyReasons;
+  } else {
+    delete absenceReasons[dateKey];
+  }
+  if (Object.keys(dailyHomeworkMissing).length > 0) {
+    homeworkMissing[dateKey] = dailyHomeworkMissing;
+  } else {
+    delete homeworkMissing[dateKey];
+  }
+
+  preferences[ATTENDANCE_RECORDS_PREFERENCE_KEY] = attendanceRecords;
+  preferences[ATTENDANCE_ABSENCE_REASONS_PREFERENCE_KEY] = absenceReasons;
+  preferences[ATTENDANCE_HOMEWORK_MISSING_PREFERENCE_KEY] = homeworkMissing;
+  return {
+    records: attendanceRecords[dateKey] || {},
+    absenceReasons: absenceReasons[dateKey] || {},
+    homeworkMissing: homeworkMissing[dateKey] || {},
+  };
 }
 
 function teamMessagePublic(row) {
@@ -1260,7 +2395,7 @@ function crossDepartmentReservationDirection({ owner, room, category }) {
 function reservationDateSummary(payloads, fallbackDate) {
   const dates = Array.isArray(payloads) ? payloads.map((item) => item.date).filter(Boolean) : [];
   if (dates.length <= 1) return formatReservationNoticeDate(dates[0] || fallbackDate);
-  return `${formatReservationNoticeDate(dates[0])} ~ ${formatReservationNoticeDate(dates[dates.length - 1])} (${dates.length}회 반복)`;
+  return `${formatReservationNoticeDate(dates[0])} ~ ${formatReservationNoticeDate(dates[dates.length - 1])} (${dates.length}\uD68C \uBC18\uBCF5)`;
 }
 
 function classroomAppUrl() {
@@ -1394,6 +2529,7 @@ function normalizeClinicListeningGrade(raw) {
 function normalizeClinicDictationGrade(raw) {
   const grade = normalizeClinicListeningGrade(raw);
   if (!grade) return '';
+  if (!CLINIC_DICTATION_NORMALIZE_HWAMOK_GRADE) return grade;
   return CLINIC_DICTATION_GRADE_ALIASES.get(grade) || grade;
 }
 
@@ -1466,6 +2602,20 @@ function clinicDictationAttemptPublic(row) {
     .filter((value) => Number.isInteger(value) && value > 0);
   const dictationRequired = Boolean(row.dictation_required);
   const dictationSubmitted = Boolean(row.dictation_submitted);
+  const imageUrls = Array.isArray(row.dictation_image_urls)
+    ? row.dictation_image_urls.map((value) => String(value || '').trim()).filter(Boolean)
+    : [];
+  const imageNames = Array.isArray(row.dictation_image_names)
+    ? row.dictation_image_names.map((value) => String(value || '').trim()).filter(Boolean)
+    : [];
+  const fallbackImageUrl = String(row.dictation_image_url || '').trim();
+  const fallbackImageName = String(row.dictation_image_name || '').trim();
+  if (!imageUrls.length && fallbackImageUrl) {
+    imageUrls.push(fallbackImageUrl);
+  }
+  if (!imageNames.length && fallbackImageName) {
+    imageNames.push(fallbackImageName);
+  }
   return {
     id: row.id,
     phone: row.phone,
@@ -1480,8 +2630,10 @@ function clinicDictationAttemptPublic(row) {
     dictationRequired,
     dictationSubmitted,
     status: !dictationRequired ? 'perfect' : dictationSubmitted ? 'submitted' : 'pending',
-    imageUrl: row.dictation_image_url || '',
-    imageName: row.dictation_image_name || '',
+    imageUrl: imageUrls[0] || '',
+    imageName: imageNames[0] || '',
+    imageUrls,
+    imageNames,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
     submittedAt: row.submitted_at || null,
@@ -1579,6 +2731,27 @@ async function saveClinicDictationUpload(req, rawFile) {
   };
 }
 
+function normalizeClinicDictationSubmissionFiles(body) {
+  const payload = body && typeof body === 'object' ? body : {};
+  if (Array.isArray(payload.files)) {
+    return payload.files.filter((file) => file && typeof file === 'object');
+  }
+  if (payload.file && typeof payload.file === 'object') {
+    return [payload.file];
+  }
+  return [];
+}
+
+async function deleteUploadedDictationFiles(uploadedFiles) {
+  await Promise.all(
+    uploadedFiles.map((file) =>
+      fs.promises
+        .unlink(path.join(CLINIC_DICTATION_UPLOAD_DIR, file.name))
+        .catch(() => {})
+    )
+  );
+}
+
 function clinicDictationUploadPathFromUrl(imageUrl) {
   const raw = String(imageUrl || '').trim();
   if (!raw) return '';
@@ -1653,6 +2826,35 @@ async function deleteClinicDictationUploadedImages(rows) {
     }
   }
   return { deletedImageCount, failedImageCount };
+}
+
+async function saveClinicDictationUploads(req, rawFiles) {
+  const files = Array.isArray(rawFiles) ? rawFiles : [];
+  if (!files.length) {
+    throw new Error('DICTATION_FILE_INVALID');
+  }
+  if (files.length > CLINIC_DICTATION_UPLOAD_MAX_COUNT) {
+    throw new Error('DICTATION_FILE_COUNT_EXCEEDED');
+  }
+
+  const declaredTotalSize = files.reduce((sum, file) => {
+    const size = Number(file && file.size);
+    return sum + (Number.isFinite(size) && size > 0 ? size : 0);
+  }, 0);
+  if (declaredTotalSize > CLINIC_DICTATION_UPLOAD_TOTAL_MAX_BYTES) {
+    throw new Error('DICTATION_FILE_TOO_LARGE');
+  }
+
+  const uploaded = [];
+  try {
+    for (const file of files) {
+      uploaded.push(await saveClinicDictationUpload(req, file));
+    }
+    return uploaded;
+  } catch (error) {
+    await deleteUploadedDictationFiles(uploaded);
+    throw error;
+  }
 }
 
 async function fetchClinicListeningGasJson(params) {
@@ -2258,11 +3460,18 @@ async function ensureClinicListeningMaterialTables() {
       submitted_at TIMESTAMPTZ NULL,
       dictation_image_url TEXT NOT NULL DEFAULT '',
       dictation_image_name TEXT NOT NULL DEFAULT '',
+      dictation_image_urls TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      dictation_image_names TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (phone, grade, day_number),
       CHECK (correct_count <= total_count)
     );
+
+    ALTER TABLE clinic_dictation_attempts
+      ADD COLUMN IF NOT EXISTS dictation_image_urls TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+    ALTER TABLE clinic_dictation_attempts
+      ADD COLUMN IF NOT EXISTS dictation_image_names TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
 
     CREATE INDEX IF NOT EXISTS idx_clinic_dictation_attempts_phone_time
       ON clinic_dictation_attempts (phone, updated_at DESC);
@@ -2271,7 +3480,7 @@ async function ensureClinicListeningMaterialTables() {
   `);
 
   await pool.query(`
-    WITH grade_sources(target_grade, source_grade) AS (
+    WITH grade_pairs(hwamok_grade, base_grade) AS (
       VALUES
         ('화목 초등부', '초등부'),
         ('화목 중1', '중1'),
@@ -2279,13 +3488,17 @@ async function ensureClinicListeningMaterialTables() {
         ('화목 중3', '중3')
     )
     INSERT INTO clinic_listening_book_titles (grade, title, updated_at)
-    SELECT grade_sources.target_grade, source.title, source.updated_at
-      FROM grade_sources
+    SELECT pair.hwamok_grade, source.title, NOW()
+      FROM grade_pairs pair
       JOIN clinic_listening_book_titles source
-        ON source.grade = grade_sources.source_grade
-    ON CONFLICT (grade) DO NOTHING;
+        ON source.grade = pair.base_grade
+     WHERE NOT EXISTS (
+       SELECT 1
+         FROM clinic_listening_book_titles target
+        WHERE target.grade = pair.hwamok_grade
+     );
 
-    WITH grade_sources(target_grade, source_grade) AS (
+    WITH grade_pairs(hwamok_grade, base_grade) AS (
       VALUES
         ('화목 초등부', '초등부'),
         ('화목 중1', '중1'),
@@ -2293,11 +3506,16 @@ async function ensureClinicListeningMaterialTables() {
         ('화목 중3', '중3')
     )
     INSERT INTO clinic_listening_materials (grade, day_number, answers, link, updated_at)
-    SELECT grade_sources.target_grade, source.day_number, source.answers, source.link, source.updated_at
-      FROM grade_sources
+    SELECT pair.hwamok_grade, source.day_number, source.answers, source.link, NOW()
+      FROM grade_pairs pair
       JOIN clinic_listening_materials source
-        ON source.grade = grade_sources.source_grade
-    ON CONFLICT (grade, day_number) DO NOTHING;
+        ON source.grade = pair.base_grade
+     WHERE NOT EXISTS (
+       SELECT 1
+         FROM clinic_listening_materials target
+        WHERE target.grade = pair.hwamok_grade
+          AND target.day_number = source.day_number
+     );
   `);
 }
 
@@ -2854,11 +4072,71 @@ app.put('/api/dashboard-storage/:key', async (req, res, next) => {
   }
 });
 
+
+app.post('/api/dashboard-storage/teacher-preferences/attendance-mutations', async (req, res, next) => {
+  let client;
+  try {
+    client = await pool.connect();
+    const { dateKey, changes } = normalizeAttendanceMutations(req.body);
+
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT storage_key, json_text, updated_at
+         FROM dashboard_storage
+        WHERE storage_key = $1
+        FOR UPDATE`,
+      [TEACHER_PREFERENCES_STORAGE_KEY]
+    );
+    const existingJsonText = rows[0]?.json_text || '{}';
+    const preferences = dashboardStorageJsonToObject(existingJsonText);
+    const daily = applyAttendanceMutations(preferences, dateKey, changes);
+    const nextJsonText = dashboardStorageObjectToBase64(preferences);
+
+    const saved = await client.query(
+      `INSERT INTO dashboard_storage (storage_key, json_text, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (storage_key)
+       DO UPDATE SET json_text = EXCLUDED.json_text,
+                     updated_at = NOW()
+       RETURNING storage_key, updated_at`,
+      [TEACHER_PREFERENCES_STORAGE_KEY, nextJsonText]
+    );
+    await client.query('COMMIT');
+
+    res.json({
+      ok: true,
+      key: TEACHER_PREFERENCES_STORAGE_KEY,
+      dateKey,
+      records: daily.records,
+      absenceReasons: daily.absenceReasons,
+      homeworkMissing: daily.homeworkMissing,
+      updatedAt: saved.rows[0]?.updated_at || null,
+    });
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (_) {}
+
+    if (error && error.statusCode === 400) {
+      return jsonError(res, 400, '출석 자동 저장 요청이 올바르지 않습니다.');
+    }
+    if (error && error.message === 'INVALID_DASHBOARD_STORAGE_JSON') {
+      return jsonError(res, 500, '저장된 출석 데이터를 읽을 수 없습니다.');
+    }
+    next(error);
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+});
+
+
 app.delete('/api/dashboard-storage/:key', async (req, res, next) => {
   try {
     const key = String(req.params.key || '').trim();
     if (key !== '_utf8_health_check') {
-      return jsonError(res, 400, '吏?먰븯吏 ?딅뒗 ??μ냼 ?ㅼ엯?덈떎.');
+      return jsonError(res, 400, 'Unsupported storage key.');
     }
 
     await pool.query('DELETE FROM dashboard_storage WHERE storage_key = $1', [
@@ -2931,6 +4209,7 @@ app.post('/api/supply-requests', async (req, res, next) => {
   }
 });
 
+
 app.post('/api/referral-discount-notifications', async (req, res, next) => {
   try {
     const payload = {
@@ -2963,6 +4242,7 @@ app.post('/api/referral-discount-notifications', async (req, res, next) => {
     next(error);
   }
 });
+
 
 app.post('/api/new-student-notifications', async (req, res, next) => {
   try {
@@ -3064,10 +4344,568 @@ app.post('/api/class-move-notifications', async (req, res, next) => {
   }
 });
 
+
+const DAESE_REHEARSAL_JOB_TTL_MS = 30 * 60 * 1000;
+const daeseRehearsalJobs = new Map();
+
+function cleanupDaeseRehearsalJobs(now = Date.now()) {
+  for (const [jobId, job] of daeseRehearsalJobs.entries()) {
+    if (job.status !== 'running' && now - job.updatedAt > DAESE_REHEARSAL_JOB_TTL_MS) {
+      daeseRehearsalJobs.delete(jobId);
+    }
+  }
+}
+
+function createDaeseRehearsalJobId() {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return `${Date.now()}-${crypto.randomBytes(8).toString('hex')}`;
+}
+
+function buildDaeseRehearsalPayload(body) {
+  const totalCount = Number.parseInt(String(body.totalCount || '0'), 10);
+  const objectiveCount = Number.parseInt(String(body.objectiveCount || '0'), 10);
+  const subjectiveCount = Number.parseInt(String(body.subjectiveCount || '0'), 10);
+  const semester = sanitizeDaeseRehearsalText(body.semester || body.term, 80);
+  const examType = sanitizeDaeseRehearsalText(body.examType || body.examName, 120);
+  const payload = {
+    year: sanitizeDaeseRehearsalText(body.year, 20),
+    school: sanitizeDaeseRehearsalText(body.school, 80),
+    grade: sanitizeDaeseRehearsalText(body.grade, 40),
+    semester,
+    examType,
+    rehearsalRound: sanitizeDaeseRehearsalText(body.rehearsalRound, 80),
+    term: sanitizeDaeseRehearsalText(body.term || semester, 80),
+    examName: sanitizeDaeseRehearsalText(body.examName || examType, 120),
+    scopeText: sanitizeDaeseRehearsalText(body.scopeText, 60000),
+    totalCount,
+    objectiveCount,
+    subjectiveCount,
+    difficulty: sanitizeDaeseRehearsalText(body.difficulty, 20) || 'medium',
+    examples: normalizeDaeseRehearsalExamples(body.examples),
+  };
+
+  if (!payload.school || !payload.scopeText) {
+    return { errorStatus: 400, errorMessage: 'School and test scope are required.' };
+  }
+  if (!Number.isInteger(totalCount) || totalCount < 1 || totalCount > 80) {
+    return { errorStatus: 400, errorMessage: 'Total question count must be between 1 and 80.' };
+  }
+  if (!Number.isInteger(objectiveCount) || !Number.isInteger(subjectiveCount) || objectiveCount < 0 || subjectiveCount < 0) {
+    return { errorStatus: 400, errorMessage: 'Objective and subjective question counts are invalid.' };
+  }
+  if (objectiveCount + subjectiveCount !== totalCount) {
+    return { errorStatus: 400, errorMessage: 'Objective plus subjective question counts must equal total count.' };
+  }
+  return { payload };
+}
+
+function createDaeseRehearsalHttpError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function buildDaeseRehearsalExampleAnalysisPayload(body) {
+  const semester = sanitizeDaeseRehearsalText(body.semester || body.term, 80);
+  const examType = sanitizeDaeseRehearsalText(body.examType || body.examName, 120);
+  const actualFiles = normalizeDaeseRehearsalActualFiles(body.actualFiles);
+  if (actualFiles.errorStatus) return actualFiles;
+  const payload = {
+    year: sanitizeDaeseRehearsalText(body.year, 20),
+    school: sanitizeDaeseRehearsalText(body.school, 80),
+    grade: sanitizeDaeseRehearsalText(body.grade, 40),
+    semester,
+    examType,
+    term: sanitizeDaeseRehearsalText(body.term || semester, 80),
+    examName: sanitizeDaeseRehearsalText(body.examName || examType, 120),
+    scopeText: sanitizeDaeseRehearsalText(body.scopeText, 60000),
+    actualQuestions: sanitizeDaeseRehearsalText(body.actualQuestions, 60000),
+    actualAnswers: sanitizeDaeseRehearsalText(body.actualAnswers, 20000),
+    actualFiles: actualFiles.files,
+  };
+  if (!payload.school || !payload.scopeText || (!payload.actualQuestions && !payload.actualFiles.length)) {
+    return { errorStatus: 400, errorMessage: 'School, test scope, and past questions or files are required.' };
+  }
+  return { payload };
+}
+
+function buildDaeseRehearsalScopePdfAnalysisPayload(body) {
+  const normalizedFile = normalizeDaeseRehearsalScopePdfFile(body.file);
+  if (normalizedFile.errorStatus) return normalizedFile;
+  const unitNumber = Number.parseInt(String(body.unitNumber || '0'), 10);
+  const payload = {
+    grade: sanitizeDaeseRehearsalText(body.grade, 40),
+    textbook: sanitizeDaeseRehearsalText(body.textbook, 160),
+    unitNumber,
+    file: normalizedFile.file,
+  };
+  if (!payload.grade || !payload.textbook) {
+    return {
+      errorStatus: 400,
+      errorMessage: 'Grade and textbook are required for textbook unit analysis.',
+    };
+  }
+  if (!Number.isInteger(unitNumber) || unitNumber < 1 || unitNumber > 8) {
+    return {
+      errorStatus: 400,
+      errorMessage: 'Unit number must be between 1 and 8.',
+    };
+  }
+  return { payload };
+}
+
+async function analyzeDaeseRehearsalExample(payload) {
+  if (!OPENAI_API_KEY) {
+    throw createDaeseRehearsalHttpError(503, 'The rehearsal OpenAI API key is not configured on the server.');
+  }
+
+  const newline = String.fromCharCode(10);
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_REHEARSAL_MODEL,
+      input: [
+        {
+          role: 'system',
+          content: [
+            '너는 고등학교 영어 내신 출제 경향 분석가다.',
+            '아래에 제공되는 시험범위, 실제 기출문제, 정답을 바탕으로 이 학교 영어 선생님이 시험범위를 실제 문제로 바꾸는 방식을 분석하라.',
+            '분석 목표는 단순 요약이 아니라, 다음 시험범위에서 어떤 문제가 나올 가능성이 높은지 예측할 수 있도록 출제자의 반복 습관과 문제 제작 방식을 구조화하는 것이다.',
+            '근거가 부족하면 단정하지 말고 "추정" 또는 "근거 부족"이라고 표시하라.',
+            '실제 기출 문장을 그대로 재사용하지 말고, 분석 목적으로만 짧게 요약하라.',
+            '반드시 유효한 JSON만 반환하라. 마크다운을 쓰지 마라.',
+          ].join(newline),
+        },
+        {
+          role: 'user',
+          content: [{ type: 'input_text', text: [
+            `연도: ${payload.year}`,
+            `학교: ${payload.school}`,
+            `학년: ${payload.grade}`,
+            `학기: ${payload.semester || payload.term}`,
+            `고사: ${payload.examType || payload.examName}`,
+            '',
+            '시험범위:',
+            payload.scopeText,
+            '',
+            '실제 기출문제:',
+            payload.actualQuestions || 'Typed past questions were not supplied. Read the uploaded past-exam files instead.',
+            '',
+            '정답:',
+            payload.actualAnswers || '정답 미입력',
+            '',
+            'Uploaded past-exam files:',
+            payload.actualFiles && payload.actualFiles.length
+              ? payload.actualFiles.map((file, index) => `${index + 1}. ${file.name} (${file.mimeType})`).join(newline)
+              : 'No uploaded files.',
+            'Use uploaded files only as temporary analysis input. Do not treat handwriting, grading marks, scores, solved traces, or personal information as teacher intent.',
+            '',
+            '다음 항목을 반드시 분석하라.',
+            '1. 출제된 지문/문장 선택 기준',
+            '2. 변형된 문장이나 표현과 변형 방식',
+            '3. 선호 문제 유형',
+            '4. 출제 의도',
+            '5. 오답 선택지 제작 방식',
+            '6. 학생 실수 유도 포인트',
+            '7. 정답 근거 위치와 근거 거리',
+            '8. 지문 내 출제 위치 패턴',
+            '9. 보기 구성 방식',
+            '10. 서술형 출제 방식',
+            '11. 교과서/부교재/여러 지문 결합 방식',
+            '12. 난이도 조절 방식',
+            '13. 반복되는 선생님 특유의 출제 습관',
+            '14. 출제 제외 또는 낮은 우선순위 경향',
+            '15. 다음 시험범위에 적용할 출제 예측 규칙',
+            '16. 분석 신뢰도와 근거 부족 항목',
+            '',
+            '세부 분석 기준:',
+            '- 출제 의도: 단순 독해 확인, 문장 구조 분석, 어휘 뉘앙스 구분, 글의 흐름 파악 중 무엇인지 구분하라.',
+            '- 출제 가능성이 높았던 이유: 핵심 주장문, 대조/역접, 원인-결과, 예시, 정의, 결론, 어법 포인트 중 무엇 때문인지 분석하라.',
+            '- 함정 설계 방식: 의미 반전, 주체 바꾸기, 시제 바꾸기, 정도 부사 바꾸기, 원인/결과 뒤집기, 유사어 혼동 여부를 정리하라.',
+            '- 정답 근거의 거리: 한 문장 안, 앞뒤 문맥 연결, 여러 문단 종합 중 어디에 해당하는지 분석하라.',
+            '- 변형 강도: 원문 거의 그대로, 표현만 변경, 구조 변경, 여러 문장 결합 중 무엇인지 낮음/중간/높음으로 분류하라.',
+            '- 학생 실수 유도 포인트: 해석 실수, 대명사 지칭 오류, 연결어 오판, 어휘 뉘앙스 착각, 삽입 위치 착각, 수식 관계 오해를 구분하라.',
+            '- 지문 내 출제 위치: 첫 문장, 주제문, 예시문, 전환 문장, 결론 문장, 세부 정보 중 어디에서 문제가 나오는지 분석하라.',
+            '- 보기 구성: 정답/오답 선택지의 길이, 어휘 수준, 문장 구조, 원문 재사용 정도, 오답의 정교함을 평가하라.',
+            '- 서술형: 원문 암기형, 조건 영작형, 어법 수정형, 빈칸 완성형인지와 채점 포인트를 정리하라.',
+            '- 범위 간 결합: 교과서 본문과 부교재 지문을 같은 주제/어법/어휘로 묶는 방식이 있는지 확인하라.',
+            '- 난이도: 어려운 문제가 지문 난이도, 선택지 함정, 문장 구조 중 무엇 때문에 어려운지 구분하라.',
+            '- 출제 제외 경향: 시험범위에 있었지만 실제로 낮은 우선순위로 보이는 지문/유형을 추론하라.',
+            '- 다음 시험범위 적용 규칙: 단순 요약이 아니라 다음 문제 생성에 바로 쓸 수 있는 실행 규칙으로 작성하라.',
+            '',
+            '각 항목은 반드시 구체적인 근거를 들어 작성하라.',
+            '다음 JSON shape만 반환하라. 각 값은 한국어 문자열 배열이어야 한다.',
+            '{"passageSelection":[],"transformationPatterns":[],"preferredQuestionTypes":[],"intentPatterns":[],"distractorPatterns":[],"studentTrapPatterns":[],"answerEvidencePatterns":[],"passagePositionPatterns":[],"choiceDesignPatterns":[],"subjectivePatterns":[],"scopeBlendingPatterns":[],"difficultyPatterns":[],"teacherHabits":[],"lowPriorityPatterns":[],"nextScopeRules":[],"confidenceNotes":[]}',
+          ].join(newline) }, ...daeseRehearsalFileInputContent(payload.actualFiles || [])],
+        },
+      ],
+      temperature: 0.2,
+      max_output_tokens: Math.min(OPENAI_REHEARSAL_MAX_OUTPUT_TOKENS, 6000),
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    console.error('OpenAI daese rehearsal analysis error:', response.status, body.slice(0, 500));
+    throw createDaeseRehearsalHttpError(502, `OpenAI analysis response error: HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = extractOpenAIResponseText(data);
+  if (!content) {
+    throw createDaeseRehearsalHttpError(502, 'No rehearsal analysis content was found in the OpenAI response.');
+  }
+
+  let parsed;
+  try {
+    parsed = parseOpenAIJsonObject(content);
+  } catch (error) {
+    console.error('OpenAI daese rehearsal analysis JSON parse error:', content.slice(0, 500));
+    throw createDaeseRehearsalHttpError(502, 'The OpenAI analysis response was not valid JSON.');
+  }
+
+  const analysis = normalizeDaeseRehearsalAnalysis(parsed);
+  if (!hasDaeseRehearsalAnalysis(analysis)) {
+    throw createDaeseRehearsalHttpError(502, 'The OpenAI analysis response did not contain usable analysis.');
+  }
+
+  return {
+    action: 'analyzeDaeseRehearsalExample',
+    model: OPENAI_REHEARSAL_MODEL,
+    analysis,
+  };
+}
+
+async function analyzeDaeseRehearsalScopePdf(payload) {
+  if (!OPENAI_API_KEY) {
+    throw createDaeseRehearsalHttpError(503, 'The rehearsal OpenAI API key is not configured on the server.');
+  }
+
+  const newline = String.fromCharCode(10);
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_REHEARSAL_MODEL,
+      input: [
+        {
+          role: 'system',
+          content: [
+            '너는 중학교 영어 내신 시험범위 분석가다.',
+            '업로드된 PDF는 중학교 교과서 단원 내용정리, 대화문, 본문, 문법, 어휘 정리 양식이다.',
+            '업로드된 교과서 단원 PDF를 읽고, 이후 시험지 생성에 바로 사용할 수 있도록 단원 내용을 구조화하라.',
+            '분석 목표는 원문을 길게 복사하는 것이 아니라 본문, 대화문, 문법, 어휘, 핵심 표현, 출제 후보 포인트를 재사용 가능한 요약 데이터로 만드는 것이다.',
+            'PDF 앞부분이나 꼬리말의 저작권/라이선스 안내, 페이지 번호, 출처 표기, 편집용 안내문은 시험범위 내용으로 보지 말고 제외하라.',
+            '학생 풀이 흔적, 채점 표시, 개인정보, 낙서가 보이면 시험범위 내용으로 보지 말고 무시하라.',
+            '원문 문장을 장문으로 그대로 베끼지 말고 분석과 짧은 근거 요약만 작성하라.',
+            '반드시 유효한 JSON만 반환하라. 마크다운을 쓰지 마라.',
+          ].join(newline),
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: [
+                `학년: ${payload.grade}`,
+                `교과서: ${payload.textbook}`,
+                `단원: ${payload.unitNumber}단원`,
+                `PDF 파일명: ${payload.file.name}`,
+                '',
+                '다음 항목을 분석하라.',
+                '1. 단원 전체 주제와 흐름',
+                '2. 본문 지문별 핵심 내용, 주제문, 결론, 대조/원인-결과/예시 구조',
+                '3. 대화문별 상황, 의사소통 기능, 핵심 표현',
+                '4. 시험에 나오기 쉬운 문법 포인트와 문장 구조',
+                '5. 필수 어휘와 의미 구분이 필요한 어휘',
+                '6. 암기 또는 변형 출제 가능성이 높은 핵심 표현',
+                '7. 핵심 문장과 변형 가능 포인트',
+                '8. 객관식/서술형 출제 후보 포인트',
+                '9. 새 문제 생성에 바로 적용할 실행 규칙',
+                '10. 분석 신뢰도와 PDF에서 근거가 부족한 항목',
+                '',
+                '다음 JSON shape만 반환하라. 각 값은 한국어 문자열 배열이어야 한다.',
+                '{"unitOverview":[],"passages":[],"dialogues":[],"grammarPoints":[],"vocabulary":[],"keyExpressions":[],"keySentences":[],"examPointCandidates":[],"questionGenerationRules":[],"confidenceNotes":[]}',
+              ].join(newline),
+            },
+            {
+              type: 'input_file',
+              filename: payload.file.name,
+              file_data: payload.file.dataUrl,
+            },
+          ],
+        },
+      ],
+      temperature: 0.15,
+      max_output_tokens: Math.min(OPENAI_REHEARSAL_MAX_OUTPUT_TOKENS, 6000),
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    console.error('OpenAI daese rehearsal scope PDF analysis error:', response.status, body.slice(0, 500));
+    throw createDaeseRehearsalHttpError(502, `OpenAI scope PDF analysis response error: HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = extractOpenAIResponseText(data);
+  if (!content) {
+    throw createDaeseRehearsalHttpError(502, 'No textbook unit analysis content was found in the OpenAI response.');
+  }
+
+  let parsed;
+  try {
+    parsed = parseOpenAIJsonObject(content);
+  } catch (error) {
+    console.error('OpenAI daese rehearsal scope PDF analysis JSON parse error:', content.slice(0, 500));
+    throw createDaeseRehearsalHttpError(502, 'The OpenAI scope PDF analysis response was not valid JSON.');
+  }
+
+  const analysis = normalizeDaeseRehearsalScopeAnalysis(parsed);
+  if (!hasDaeseRehearsalScopeAnalysis(analysis)) {
+    throw createDaeseRehearsalHttpError(502, 'The OpenAI scope PDF analysis response did not contain usable analysis.');
+  }
+
+  return {
+    action: 'analyzeDaeseRehearsalScopePdf',
+    model: OPENAI_REHEARSAL_MODEL,
+    analysis,
+  };
+}
+
+async function generateDaeseRehearsalExam(payload) {
+  if (!OPENAI_API_KEY) {
+    throw createDaeseRehearsalHttpError(503, 'The rehearsal OpenAI API key is not configured on the server.');
+  }
+
+  const newline = String.fromCharCode(10);
+  const exampleText = payload.examples.length
+    ? payload.examples.map((example, index) => [
+        `Example ${index + 1}`,
+        `Year: ${example.year}`,
+        `School: ${example.school}`,
+        `Grade/Semester/Exam: ${[example.grade, example.semester || example.term, example.examType || example.examName].filter(Boolean).join(' / ')}`,
+        `Stored past-exam analysis:${newline}${formatDaeseRehearsalAnalysis(example.analysis)}`,
+        `Test scope:${newline}${example.scopeText}`,
+        `Actual past questions:${newline}${example.actualQuestions}`,
+        example.actualAnswers ? `Answer key for the past questions:${newline}${example.actualAnswers}` : 'Answer key for the past questions: not supplied',
+      ].join(newline)).join(newline + newline)
+    : 'No saved school-specific examples were supplied. Generate only from the new test scope.';
+
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_REHEARSAL_MODEL,
+      input: [
+        {
+          role: 'system',
+          content: [
+            'You create original English exam rehearsal worksheets for a Korean English academy.',
+            'Use the school-specific past examples only as style and trend references.',
+            'When stored past-exam analysis is supplied, treat it as the precomputed teacher-profile evidence and apply it before rereading the full past questions.',
+            'Use supplied answer keys to infer the school exam intent, distractor style, and scoring focus.',
+            'Before writing questions, analyze every supplied school-specific past example and infer how the teacher converted the old test scope into real questions.',
+            'Identify repeated patterns: selected passages, transformed sentences, grammar/vocabulary/blank/order/insertion/summary/content-check preferences, distractor construction, answer evidence location, priority passages within the scope, and whether textbook and supplementary material are blended.',
+            'Apply that inferred teacher profile to the new test scope by choosing the points the same teacher would most likely ask about.',
+            'Do not reproduce real past questions verbatim. Create new questions grounded in the supplied test scope.',
+            'All objective question prompts and subjective prompts must be written in Korean.',
+            'Passages and objective answer choices may stay in English when the test scope is English.',
+            'All explanations, answer keys, trend summaries, and quality notes must be written in Korean.',
+            'Return valid JSON only. Do not use markdown.',
+          ].join(newline),
+        },
+        {
+          role: 'user',
+          content: [
+            `Year: ${payload.year}`,
+            `School: ${payload.school}`,
+            `Grade: ${payload.grade}`,
+            `Semester: ${payload.semester || payload.term}`,
+            `Exam type: ${payload.examType || payload.examName}`,
+            `Rehearsal round: ${payload.rehearsalRound}`,
+            `Difficulty: ${payload.difficulty}`,
+            `Total questions: ${payload.totalCount}`,
+            `Objective questions: ${payload.objectiveCount}`,
+            `Subjective questions: ${payload.subjectiveCount}`,
+            '',
+            'Return exactly this JSON shape and no other text:',
+            '{"title":"","subtitle":"","trendSummary":[""],"qualityChecks":[""],"objectiveQuestions":[{"number":1,"passage":"","question":"","choices":["","","","",""],"answerIndex":1,"answer":"","explanation":"","sourceHint":""}],"subjectiveQuestions":[{"number":1,"prompt":"","answer":"","explanation":"","scoringGuide":"","sourceHint":""}],"answerKey":[{"number":1,"answer":"","explanation":""}]}',
+            '',
+            'Generation rules:',
+            '- The objectiveQuestions array length must exactly match the requested objective question count.',
+            '- The subjectiveQuestions array length must exactly match the requested subjective question count.',
+            '- Objective question values in question must be Korean prompts, not English prompts.',
+            '- Use Korean exam-style prompts such as ?? ?? ??? ?? ??? ???, ??? ??? ?? ?? ??? ???, ?? ? ?? ? ??? ?? ???, ?? ??? ???? ????, ??? ??? ??? ??? ?? ??? ???.',
+            '- Objective questions should use five choices unless the scope makes that impossible.',
+            '- Do not include choice labels such as 1., 2., ?, or ? inside choices. Put only the choice text.',
+            '- Do not end choice text with a final period unless the period is part of an abbreviation.',
+            '- answerIndex is one-based.',
+            '- Put a passage in passage only when the question needs one. Otherwise use an empty string.',
+            '- answerKey must include every question in number order.',
+            '- trendSummary must specifically summarize how the supplied past examples shaped this generated worksheet.',
+            '- sourceHint must briefly state which new scope item and which inferred past-exam trend were reflected.',
+            '- Never copy a real past question sentence or answer choice verbatim; use the past examples to predict style, not to duplicate content.',
+            '',
+            'New test scope:',
+            payload.scopeText,
+            '',
+            'School-specific past examples with answer keys:',
+            exampleText,
+          ].join(newline),
+        },
+      ],
+      temperature: 0.45,
+      max_output_tokens: OPENAI_REHEARSAL_MAX_OUTPUT_TOKENS,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    console.error('OpenAI daese rehearsal error:', response.status, body.slice(0, 500));
+    throw createDaeseRehearsalHttpError(502, `OpenAI response error: HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = extractOpenAIResponseText(data);
+  if (!content) {
+    throw createDaeseRehearsalHttpError(502, 'No rehearsal exam content was found in the OpenAI response.');
+  }
+
+  let parsed;
+  try {
+    parsed = parseOpenAIJsonObject(content);
+  } catch (error) {
+    console.error('OpenAI daese rehearsal JSON parse error:', content.slice(0, 500));
+    throw createDaeseRehearsalHttpError(502, 'The OpenAI response was not valid JSON.');
+  }
+
+  const exam = normalizeDaeseRehearsalGeneratedExam(parsed, payload);
+  if (!exam) {
+    throw createDaeseRehearsalHttpError(502, 'The OpenAI response did not match the requested question counts.');
+  }
+
+  return {
+    action: 'generateDaeseRehearsalExam',
+    model: OPENAI_REHEARSAL_MODEL,
+    exam,
+  };
+}
+
+async function runDaeseRehearsalJob(jobId) {
+  const job = daeseRehearsalJobs.get(jobId);
+  if (!job || job.status !== 'queued') return;
+  job.status = 'running';
+  job.updatedAt = Date.now();
+  try {
+    const result = await generateDaeseRehearsalExam(job.payload);
+    job.status = 'succeeded';
+    job.model = result.model;
+    job.exam = result.exam;
+    job.message = '';
+  } catch (error) {
+    console.error('Daese rehearsal job failed:', error && error.message ? error.message : error);
+    job.status = 'failed';
+    job.message = error && error.message ? error.message : 'Rehearsal exam generation failed.';
+  } finally {
+    job.updatedAt = Date.now();
+  }
+}
+
+app.post('/api/daese-rehearsal/generate', async (req, res, next) => {
+  try {
+    const built = buildDaeseRehearsalPayload(req.body || {});
+    if (built.errorMessage) return jsonError(res, built.errorStatus, built.errorMessage);
+    const result = await generateDaeseRehearsalExam(built.payload);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    if (error && error.statusCode) return jsonError(res, error.statusCode, error.message);
+    next(error);
+  }
+});
+
+app.post('/api/daese-rehearsal/analyze-example', async (req, res, next) => {
+  try {
+    const built = buildDaeseRehearsalExampleAnalysisPayload(req.body || {});
+    if (built.errorMessage) return jsonError(res, built.errorStatus, built.errorMessage);
+    const result = await analyzeDaeseRehearsalExample(built.payload);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    if (error && error.statusCode) return jsonError(res, error.statusCode, error.message);
+    next(error);
+  }
+});
+
+app.post('/api/daese-rehearsal/analyze-scope-pdf', async (req, res, next) => {
+  try {
+    const built = buildDaeseRehearsalScopePdfAnalysisPayload(req.body || {});
+    if (built.errorMessage) return jsonError(res, built.errorStatus, built.errorMessage);
+    const result = await analyzeDaeseRehearsalScopePdf(built.payload);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    if (error && error.statusCode) return jsonError(res, error.statusCode, error.message);
+    next(error);
+  }
+});
+
+app.post('/api/daese-rehearsal/generate-jobs', async (req, res, next) => {
+  try {
+    if (!OPENAI_API_KEY) {
+      return jsonError(res, 503, 'The rehearsal OpenAI API key is not configured on the server.');
+    }
+    const built = buildDaeseRehearsalPayload(req.body || {});
+    if (built.errorMessage) return jsonError(res, built.errorStatus, built.errorMessage);
+    cleanupDaeseRehearsalJobs();
+    const now = Date.now();
+    const jobId = createDaeseRehearsalJobId();
+    daeseRehearsalJobs.set(jobId, {
+      id: jobId,
+      status: 'queued',
+      payload: built.payload,
+      createdAt: now,
+      updatedAt: now,
+      message: '',
+      model: '',
+      exam: null,
+    });
+    setImmediate(() => runDaeseRehearsalJob(jobId));
+    res.status(202).json({ ok: true, jobId, status: 'queued' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/daese-rehearsal/generate-jobs/:jobId', async (req, res) => {
+  cleanupDaeseRehearsalJobs();
+  const jobId = String(req.params.jobId || '').trim();
+  const job = daeseRehearsalJobs.get(jobId);
+  if (!job) return jsonError(res, 404, 'Rehearsal generation job was not found.');
+  res.json({
+    ok: true,
+    jobId,
+    status: job.status,
+    message: job.message || '',
+    model: job.model || '',
+    exam: job.status === 'succeeded' ? job.exam : null,
+    createdAt: new Date(job.createdAt).toISOString(),
+    updatedAt: new Date(job.updatedAt).toISOString(),
+  });
+});
+
 app.post('/api/writing-worksheet/generate-sentences', async (req, res, next) => {
   try {
     if (!OPENAI_API_KEY) {
-      return jsonError(res, 503, '영작 문제지 OpenAI API 키가 서버에 설정되어 있지 않습니다.');
+      return jsonError(res, 503, '?? ??? OpenAI API ?? ??? ???? ?? ????.');
     }
 
     const requestedCount = Number.parseInt(String(req.body.count || '12'), 10);
@@ -3079,6 +4917,7 @@ app.post('/api/writing-worksheet/generate-sentences', async (req, res, next) => 
       classProfile: sanitizeWritingWorksheetText(req.body.classProfile, 180),
       level: sanitizeWritingWorksheetText(req.body.level, 40),
       difficulty: sanitizeWritingWorksheetText(req.body.difficulty, 40),
+      difficultyCode: normalizeWritingWorksheetDifficultyCode(req.body.difficultyCode, req.body.difficulty),
       textbook: sanitizeWritingWorksheetText(req.body.textbook, 180),
       progress: sanitizeWritingWorksheetText(req.body.progress, 120),
       unitTitle: sanitizeWritingWorksheetText(req.body.unitTitle, 220),
@@ -3089,7 +4928,7 @@ app.post('/api/writing-worksheet/generate-sentences', async (req, res, next) => 
     };
 
     if (!payload.textbook || !payload.progress || !payload.unitTitle || !payload.grammarFocus) {
-      return jsonError(res, 400, '교재 범위, 단원명, 핵심 문법 정보가 필요합니다.');
+      return jsonError(res, 400, '?? ??, ???, ?? ?? ??? ?????.');
     }
 
     const response = await fetch('https://api.openai.com/v1/responses', {
@@ -3128,13 +4967,15 @@ app.post('/api/writing-worksheet/generate-sentences', async (req, res, next) => 
               'Hard constraints:',
               '- No duplicate english, korean, or wrong sentences.',
               '- Use only the textbook unit, grammar, vocabulary, and teacher memo below.',
-              '- Keep sentences appropriate for the student level and difficulty.',
+              '- Keep sentences appropriate for the student level, difficulty, and requested exercise types.',
               '- Output JSON only.',
               '',
               `Class: ${payload.className}`,
               `Class profile: ${payload.classProfile}`,
               `Student level: ${payload.level}`,
               `Difficulty: ${payload.difficulty}`,
+              `Difficulty code: ${payload.difficultyCode}`,
+              `Difficulty rules: ${writingWorksheetDifficultyInstruction(payload.difficultyCode)}`,
               `Textbook: ${payload.textbook}`,
               `Printed-page progress: ${payload.progress}`,
               `Unit title: ${payload.unitTitle}`,
@@ -3142,6 +4983,7 @@ app.post('/api/writing-worksheet/generate-sentences', async (req, res, next) => 
               `Required vocabulary: ${payload.vocabulary}`,
               `Teacher memo: ${payload.teacherNote}`,
               `Requested exercise types: ${payload.exerciseTypes.join(', ')}`,
+              `Exercise type rules: ${writingWorksheetExerciseTypeInstruction(payload.exerciseTypes)}`,
             ].join('\n'),
           },
         ],
@@ -3153,13 +4995,13 @@ app.post('/api/writing-worksheet/generate-sentences', async (req, res, next) => 
     if (!response.ok) {
       const body = await response.text();
       console.error('OpenAI writing worksheet error:', response.status, body.slice(0, 500));
-      return jsonError(res, 502, `OpenAI 응답 오류: HTTP ${response.status}`);
+      return jsonError(res, 502, `OpenAI ?? ??: HTTP ${response.status}`);
     }
 
     const data = await response.json();
     const content = extractOpenAIResponseText(data);
     if (!content) {
-      return jsonError(res, 502, 'OpenAI 응답에서 영작 문장 데이터를 찾지 못했습니다.');
+      return jsonError(res, 502, 'OpenAI ???? ?? ?? ???? ?? ?????.');
     }
 
     let parsed;
@@ -3167,12 +5009,12 @@ app.post('/api/writing-worksheet/generate-sentences', async (req, res, next) => 
       parsed = parseOpenAIJsonObject(content);
     } catch (error) {
       console.error('OpenAI writing worksheet JSON parse error:', content.slice(0, 500));
-      return jsonError(res, 502, 'OpenAI 응답을 JSON으로 해석하지 못했습니다.');
+      return jsonError(res, 502, 'OpenAI ??? JSON?? ???? ?????.');
     }
 
     const sentences = normalizeWritingWorksheetSentences(parsed, count);
     if (!sentences.length) {
-      return jsonError(res, 502, 'OpenAI 응답에서 사용할 수 있는 영작 문장이 없습니다.');
+      return jsonError(res, 502, 'OpenAI ???? ??? ? ?? ?? ??? ????.');
     }
 
     res.json({
@@ -3182,6 +5024,87 @@ app.post('/api/writing-worksheet/generate-sentences', async (req, res, next) => 
       requestedCount: count,
       count: sentences.length,
       sentences,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/stats-prediction/explain', async (req, res, next) => {
+  try {
+    if (!OPENAI_API_KEY) {
+      return jsonError(res, 503, 'The OpenAI API key is not configured on the server.');
+    }
+
+    const payload = normalizeStatsPredictionPayload(req.body);
+    const hasV1Forecast = payload.nextFourWeeks.title && payload.nextMonth.title;
+    const hasV2Forecast =
+      payload.nextFourWeeksTotal.title && payload.weeklyForecasts.length > 0;
+    if (!payload.fingerprint || (!hasV1Forecast && !hasV2Forecast)) {
+      return jsonError(res, 400, 'The stats prediction payload is invalid.');
+    }
+
+    const response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: OPENAI_STATS_PREDICTION_MODEL,
+        input: [
+          {
+            role: 'system',
+            content: [
+              'You are an operations analyst for a Korean English academy.',
+              'Explain statistical forecasts in Korean.',
+              'Do not change the numeric forecast. Use only the supplied aggregate data.',
+              'Withdrawal risk candidates are prevention targets, not confirmed withdrawals.',
+              'Use only supplied student names in withdrawalRiskCandidates.',
+              'Do not invent student names, phone numbers, or private details.',
+              'Keep the answer concise and actionable.',
+            ].join('\n'),
+          },
+          {
+            role: 'user',
+            content: [
+              'Write a short forecast explanation for the academy manager.',
+              'Structure the answer in 3 compact paragraphs:',
+              '1. Overall 4-week trend and expected net change.',
+              '2. Week-by-week points to watch in inquiries, placement tests, new students, and withdrawals.',
+              '3. Withdrawal risk candidates and suggested prevention actions for the next 4 weeks.',
+              'If withdrawalRiskCandidates is empty, say that student-level evidence is insufficient.',
+              'Use Korean only.',
+              '',
+              JSON.stringify(payload),
+            ].join('\n'),
+          },
+        ],
+        temperature: 0.25,
+        max_output_tokens: OPENAI_STATS_PREDICTION_MAX_OUTPUT_TOKENS,
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.error('OpenAI stats prediction error:', response.status, body.slice(0, 500));
+      return jsonError(res, 502, `OpenAI stats prediction response error: HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const explanation = sanitizeWritingWorksheetText(
+      extractOpenAIResponseText(data),
+      1800
+    );
+    if (!explanation) {
+      return jsonError(res, 502, 'No stats prediction explanation was found in the OpenAI response.');
+    }
+
+    res.json({
+      ok: true,
+      action: 'explainStatsPrediction',
+      model: OPENAI_STATS_PREDICTION_MODEL,
+      explanation,
     });
   } catch (error) {
     next(error);
@@ -3668,6 +5591,7 @@ app.get('/api/clinic-dictation', async (req, res, next) => {
               total_count, correct_count, wrong_answers,
               dictation_required, dictation_submitted, submitted_at,
               dictation_image_url, dictation_image_name,
+              dictation_image_urls, dictation_image_names,
               created_at, updated_at
          FROM clinic_dictation_attempts
         WHERE phone = $1
@@ -3723,6 +5647,7 @@ app.get('/api/clinic-dictation/admin', async (req, res, next) => {
               total_count, correct_count, wrong_answers,
               dictation_required, dictation_submitted, submitted_at,
               dictation_image_url, dictation_image_name,
+              dictation_image_urls, dictation_image_names,
               created_at, updated_at
          FROM clinic_dictation_attempts
         ${whereClause}
@@ -3781,6 +5706,7 @@ app.delete('/api/clinic-dictation/admin', async (req, res, next) => {
   }
 });
 
+
 app.post('/api/clinic-dictation/attempts', async (req, res, next) => {
   try {
     const phone = normalizeClinicPhone(req.body.phone);
@@ -3811,9 +5737,11 @@ app.post('/api/clinic-dictation/attempts', async (req, res, next) => {
          phone, student_name, class_name, grade, day_number,
          total_count, correct_count, wrong_answers,
          dictation_required, dictation_submitted, submitted_at,
-         dictation_image_url, dictation_image_name, created_at, updated_at
+         dictation_image_url, dictation_image_name,
+         dictation_image_urls, dictation_image_names,
+         created_at, updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE, NULL, '', '', NOW(), NOW())
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE, NULL, '', '', ARRAY[]::TEXT[], ARRAY[]::TEXT[], NOW(), NOW())
        ON CONFLICT (phone, grade, day_number)
        DO UPDATE SET student_name = EXCLUDED.student_name,
                      class_name = EXCLUDED.class_name,
@@ -3825,11 +5753,14 @@ app.post('/api/clinic-dictation/attempts', async (req, res, next) => {
                      submitted_at = NULL,
                      dictation_image_url = '',
                      dictation_image_name = '',
+                     dictation_image_urls = ARRAY[]::TEXT[],
+                     dictation_image_names = ARRAY[]::TEXT[],
                      updated_at = NOW()
        RETURNING id, phone, student_name, class_name, grade, day_number,
                  total_count, correct_count, wrong_answers,
                  dictation_required, dictation_submitted, submitted_at,
                  dictation_image_url, dictation_image_name,
+                 dictation_image_urls, dictation_image_names,
                  created_at, updated_at`,
       [
         phone,
@@ -3884,6 +5815,7 @@ app.post('/api/clinic-dictation/:id/submission', async (req, res, next) => {
                 total_count, correct_count, wrong_answers,
                 dictation_required, dictation_submitted, submitted_at,
                 dictation_image_url, dictation_image_name,
+                dictation_image_urls, dictation_image_names,
                 created_at, updated_at
            FROM clinic_dictation_attempts
           WHERE id = $1`,
@@ -3894,28 +5826,39 @@ app.post('/api/clinic-dictation/:id/submission', async (req, res, next) => {
 
     let uploaded;
     try {
-      uploaded = await saveClinicDictationUpload(req, req.body.file);
+      uploaded = await saveClinicDictationUploads(
+        req,
+        normalizeClinicDictationSubmissionFiles(req.body)
+      );
     } catch (error) {
+      if (error.message === 'DICTATION_FILE_COUNT_EXCEEDED') {
+        return jsonError(res, 400, `사진은 최대 ${CLINIC_DICTATION_UPLOAD_MAX_COUNT}장까지 업로드할 수 있습니다.`);
+      }
       if (error.message === 'DICTATION_FILE_TOO_LARGE') {
-        return jsonError(res, 400, '사진은 8MB 이하로 업로드해주세요.');
+        return jsonError(res, 400, '사진은 장당 8MB 이하, 총 48MB 이하로 업로드해주세요.');
       }
       return jsonError(res, 400, '사진 파일 형식이 올바르지 않습니다.');
     }
 
+    const imageUrls = uploaded.map((file) => file.url);
+    const imageNames = uploaded.map((file) => file.name);
     const { rows } = await pool.query(
       `UPDATE clinic_dictation_attempts
           SET dictation_submitted = TRUE,
               submitted_at = NOW(),
               dictation_image_url = $2,
               dictation_image_name = $3,
+              dictation_image_urls = $4::TEXT[],
+              dictation_image_names = $5::TEXT[],
               updated_at = NOW()
         WHERE id = $1
         RETURNING id, phone, student_name, class_name, grade, day_number,
                   total_count, correct_count, wrong_answers,
                   dictation_required, dictation_submitted, submitted_at,
                   dictation_image_url, dictation_image_name,
+                  dictation_image_urls, dictation_image_names,
                   created_at, updated_at`,
-      [id, uploaded.url, uploaded.name]
+      [id, imageUrls[0] || '', imageNames[0] || '', imageUrls, imageNames]
     );
 
     res.json({ ok: true, attempt: clinicDictationAttemptPublic(rows[0]) });
@@ -4368,12 +6311,17 @@ setInterval(() => {
   pool.query('DELETE FROM teacher_sessions WHERE expires_at <= NOW()').catch(() => {});
 }, 30 * 60 * 1000).unref();
 
+setInterval(() => {
+  applyDueRosterActiveStatusReservations().catch(() => {});
+}, 10 * 60 * 1000).unref();
+
 async function start() {
   await pool.query('SELECT 1');
   await ensureTeamCommunicationTables();
   await ensureTodoTables();
   await ensureClinicListeningMaterialTables();
   await ensureDashboardStorageTables();
+  await applyDueRosterActiveStatusReservations();
   app.listen(PORT, () => {
     console.log(`대세학원 강의실 예약 서버가 포트 ${PORT}에서 실행 중입니다.`);
   });
