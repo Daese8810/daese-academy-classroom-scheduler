@@ -990,18 +990,291 @@ const DAESE_REHEARSAL_SCOPE_ANALYSIS_KEYS = [
   'confidenceNotes',
 ];
 
+const DAESE_REHEARSAL_QUESTION_TYPE_LABELS = {
+  main_idea: '주제/제목/요지/요약',
+  blank: '빈칸',
+  grammar: '어법/문법',
+  vocabulary: '어휘',
+  order: '순서/배열',
+  insertion: '문장 삽입',
+  irrelevant: '흐름 무관',
+  content: '내용 일치/불일치',
+  reference_inference: '지칭/추론',
+  other: '기타',
+};
+
+const DAESE_REHEARSAL_QUESTION_TYPE_KEYS = Object.keys(
+  DAESE_REHEARSAL_QUESTION_TYPE_LABELS
+);
+
+const DAESE_REHEARSAL_QUESTION_TYPE_PROMPT_RULES = {
+  main_idea: 'Use a topic, title, main idea, summary, or gist prompt.',
+  blank: 'Use a blank-completion prompt.',
+  grammar: 'Use a grammar or usage-correction prompt.',
+  vocabulary: 'Use a vocabulary, word meaning, synonym, or contextual usage prompt.',
+  order: 'Use a sentence or paragraph ordering prompt.',
+  insertion: 'Use a sentence-insertion or best-position prompt.',
+  irrelevant: 'Use an irrelevant-sentence or flow-disruption prompt.',
+  content: 'Use a content true/false, matching, or detail-check prompt.',
+  reference_inference: 'Use a referent, inference, implication, or meaning-in-context prompt.',
+  other: 'Use the school-specific special type represented by the past-exam data.',
+};
+
+const DAESE_REHEARSAL_QUESTION_FEATURE_FIELDS = [
+  'number',
+  'kind',
+  'sourceScope',
+  'questionType',
+  'standardType',
+  'intent',
+  'passagePosition',
+  'evidenceLocation',
+  'evidenceDistance',
+  'transformationStrength',
+  'distractorPattern',
+  'studentTrap',
+  'difficultyCause',
+  'scopeBlend',
+  'confidence',
+  'notes',
+];
+
+const DAESE_REHEARSAL_TEACHER_PROFILE_WEIGHT_KEYS = [
+  'questionTypeWeights',
+  'distractorWeights',
+  'evidenceDistanceWeights',
+  'transformationWeights',
+  'passagePositionWeights',
+  'difficultyWeights',
+];
+
 function normalizeDaeseRehearsalAnalysis(value) {
   const source = value && typeof value === 'object' ? value : {};
   const result = {};
   for (const key of DAESE_REHEARSAL_ANALYSIS_KEYS) {
     result[key] = normalizeDaeseRehearsalList(source[key], 12, 900);
   }
+  result.questionFeatures = normalizeDaeseRehearsalQuestionFeatures(source.questionFeatures);
+  result.teacherProfile = normalizeDaeseRehearsalTeacherProfile(source.teacherProfile);
+  result.questionTypeStats = normalizeDaeseRehearsalQuestionTypeStats(
+    source.questionTypeStats,
+    result.questionFeatures
+  );
   return result;
 }
 
 function hasDaeseRehearsalAnalysis(value) {
   const analysis = normalizeDaeseRehearsalAnalysis(value);
-  return DAESE_REHEARSAL_ANALYSIS_KEYS.some((key) => analysis[key].length > 0);
+  return DAESE_REHEARSAL_ANALYSIS_KEYS.some((key) => analysis[key].length > 0) ||
+    analysis.questionFeatures.length > 0 ||
+    Object.keys(analysis.teacherProfile).length > 0 ||
+    Object.keys(analysis.questionTypeStats).length > 0;
+}
+
+function normalizeDaeseRehearsalQuestionType(value) {
+  const text = sanitizeDaeseRehearsalText(value, 160).replace(/\s+/g, ' ').trim();
+  const lower = text.toLowerCase();
+  if (!lower) return '';
+  if (DAESE_REHEARSAL_QUESTION_TYPE_KEYS.includes(lower)) return lower;
+  if (/main|topic|title|summary|gist|주제|제목|요지|요약|주장/.test(lower)) return 'main_idea';
+  if (/blank|빈칸|들어갈 말|완성/.test(lower)) return 'blank';
+  if (/grammar|grammatical|usage|어법|문법|어색|틀린/.test(lower)) return 'grammar';
+  if (/vocab|word|meaning|synonym|어휘|단어|낱말|문맥상/.test(lower)) return 'vocabulary';
+  if (/order|sequence|arrange|순서|배열/.test(lower)) return 'order';
+  if (/insert|insertion|position|삽입|들어가기|위치/.test(lower)) return 'insertion';
+  if (/irrelevant|unrelated|flow|무관|관계없는|흐름/.test(lower)) return 'irrelevant';
+  if (/content|true|false|detail|일치|불일치|내용/.test(lower)) return 'content';
+  if (/reference|referent|inference|infer|imply|지칭|추론|가리키|의미/.test(lower)) {
+    return 'reference_inference';
+  }
+  if (/other|기타/.test(lower)) return 'other';
+  return '';
+}
+
+function normalizeDaeseRehearsalQuestionFeatures(value) {
+  const source = Array.isArray(value) ? value : [];
+  const result = [];
+  for (const item of source) {
+    if (!item || typeof item !== 'object') continue;
+    const feature = {};
+    for (const key of DAESE_REHEARSAL_QUESTION_FEATURE_FIELDS) {
+      const maxLength = key === 'notes' ? 500 : 160;
+      const text = sanitizeDaeseRehearsalText(item[key], maxLength).replace(/\s+/g, ' ');
+      if (text) feature[key] = text;
+    }
+    const standardType = normalizeDaeseRehearsalQuestionType(
+      feature.standardType || feature.questionType
+    );
+    if (standardType) feature.standardType = standardType;
+    if (Object.keys(feature).length) result.push(feature);
+    if (result.length >= 120) break;
+  }
+  return result;
+}
+
+function normalizeDaeseRehearsalWeightList(value) {
+  const source = Array.isArray(value) ? value : [];
+  const result = [];
+  for (const item of source) {
+    if (!item || typeof item !== 'object') continue;
+    const label = sanitizeDaeseRehearsalText(item.label || item.name || item.type, 120)
+      .replace(/\s+/g, ' ');
+    if (!label) continue;
+    const rawWeight = Number(item.weight);
+    const weight = Number.isFinite(rawWeight)
+      ? Math.min(Math.max(Math.round(rawWeight), 0), 100)
+      : 0;
+    const evidence = sanitizeDaeseRehearsalText(item.evidence || item.reason || '', 300)
+      .replace(/\s+/g, ' ');
+    result.push({ label, weight, evidence });
+    if (result.length >= 20) break;
+  }
+  return result;
+}
+
+function normalizeDaeseRehearsalTeacherProfile(value) {
+  if (!value || typeof value !== 'object') return {};
+  const result = {};
+  for (const key of DAESE_REHEARSAL_TEACHER_PROFILE_WEIGHT_KEYS) {
+    const weights = normalizeDaeseRehearsalWeightList(value[key]);
+    if (weights.length) result[key] = weights;
+  }
+  const passagePriorityRules = normalizeDaeseRehearsalList(value.passagePriorityRules, 12, 700);
+  const generationBlueprint = normalizeDaeseRehearsalList(value.generationBlueprint, 12, 700);
+  const confidence = sanitizeDaeseRehearsalText(value.confidence, 80).replace(/\s+/g, ' ');
+  const confidenceReason = sanitizeDaeseRehearsalText(value.confidenceReason, 500)
+    .replace(/\s+/g, ' ');
+  if (passagePriorityRules.length) result.passagePriorityRules = passagePriorityRules;
+  if (generationBlueprint.length) result.generationBlueprint = generationBlueprint;
+  if (confidence) result.confidence = confidence;
+  if (confidenceReason) result.confidenceReason = confidenceReason;
+  return result;
+}
+
+function normalizeDaeseRehearsalQuestionTypeStatList(value) {
+  const source = Array.isArray(value) ? value : [];
+  const result = [];
+  for (const item of source) {
+    if (!item || typeof item !== 'object') continue;
+    const type = normalizeDaeseRehearsalQuestionType(item.type || item.label || item.name);
+    if (!type) continue;
+    const countRaw = Number(item.count);
+    const count = Number.isFinite(countRaw) ? Math.max(0, Math.round(countRaw)) : 0;
+    const ratioRaw = Number(item.ratio);
+    const ratio = Number.isFinite(ratioRaw) ? Math.min(Math.max(ratioRaw, 0), 1) : 0;
+    const evidence = sanitizeDaeseRehearsalText(item.evidence || item.reason || '', 300)
+      .replace(/\s+/g, ' ');
+    result.push({
+      type,
+      label: DAESE_REHEARSAL_QUESTION_TYPE_LABELS[type] || type,
+      count,
+      ratio,
+      evidence,
+    });
+    if (result.length >= 20) break;
+  }
+  return result;
+}
+
+function buildDaeseRehearsalQuestionTypeStatsFromFeatures(questionFeatures) {
+  const counts = new Map();
+  let objectiveTotal = 0;
+  let subjectiveTotal = 0;
+  for (const feature of Array.isArray(questionFeatures) ? questionFeatures : []) {
+    const kind = sanitizeDaeseRehearsalText(feature.kind || feature.answerKind, 80)
+      .toLowerCase();
+    if (/subjective|서술|주관/.test(kind)) {
+      subjectiveTotal += 1;
+      continue;
+    }
+    const type = normalizeDaeseRehearsalQuestionType(feature.standardType || feature.questionType);
+    if (!type) continue;
+    objectiveTotal += 1;
+    counts.set(type, (counts.get(type) || 0) + 1);
+  }
+  if (!objectiveTotal && !subjectiveTotal) return {};
+  return {
+    objectiveTotal,
+    subjectiveTotal,
+    analyzedExamCount: 1,
+    confidence: objectiveTotal >= 15 ? 'medium' : 'low',
+    objectiveTypes: Array.from(counts.entries()).map(([type, count]) => ({
+      type,
+      label: DAESE_REHEARSAL_QUESTION_TYPE_LABELS[type] || type,
+      count,
+      ratio: objectiveTotal ? count / objectiveTotal : 0,
+      evidence: 'questionFeatures auto count',
+    })),
+  };
+}
+
+function normalizeDaeseRehearsalQuestionTypeStats(value, questionFeatures = []) {
+  const source = value && typeof value === 'object' ? value : {};
+  const objectiveTypes = normalizeDaeseRehearsalQuestionTypeStatList(
+    source.objectiveTypes || source.types
+  );
+  const subjectiveTypes = normalizeDaeseRehearsalQuestionTypeStatList(source.subjectiveTypes);
+  const objectiveTypeSum = objectiveTypes.reduce((sum, item) => sum + item.count, 0);
+  const subjectiveTypeSum = subjectiveTypes.reduce((sum, item) => sum + item.count, 0);
+  const objectiveRaw = Number(
+    source.objectiveTotal || source.objectiveCount || source.totalObjectiveQuestions
+  );
+  const subjectiveRaw = Number(
+    source.subjectiveTotal || source.subjectiveCount || source.totalSubjectiveQuestions
+  );
+  const objectiveTotal = Number.isFinite(objectiveRaw) && objectiveRaw > 0
+    ? Math.round(objectiveRaw)
+    : objectiveTypeSum;
+  const subjectiveTotal = Number.isFinite(subjectiveRaw) && subjectiveRaw > 0
+    ? Math.round(subjectiveRaw)
+    : subjectiveTypeSum;
+  if (!objectiveTotal && !subjectiveTotal && !objectiveTypes.length && !subjectiveTypes.length) {
+    return buildDaeseRehearsalQuestionTypeStatsFromFeatures(questionFeatures);
+  }
+  const analyzedExamRaw = Number(source.analyzedExamCount || source.examCount || 1);
+  const analyzedExamCount = Number.isFinite(analyzedExamRaw) && analyzedExamRaw > 0
+    ? Math.round(analyzedExamRaw)
+    : 1;
+  return {
+    objectiveTotal,
+    subjectiveTotal,
+    analyzedExamCount,
+    confidence: sanitizeDaeseRehearsalText(source.confidence, 80).replace(/\s+/g, ' ') ||
+      (objectiveTotal >= 15 ? 'medium' : 'low'),
+    objectiveTypes: objectiveTypes.map((item) => ({
+      ...item,
+      ratio: item.ratio || (objectiveTotal ? item.count / objectiveTotal : 0),
+    })),
+    subjectiveTypes: subjectiveTypes.map((item) => ({
+      ...item,
+      ratio: item.ratio || (subjectiveTotal ? item.count / subjectiveTotal : 0),
+    })),
+    notes: normalizeDaeseRehearsalList(source.notes, 8, 500),
+  };
+}
+
+function formatDaeseRehearsalTeacherProfile(profile) {
+  if (!profile || typeof profile !== 'object' || !Object.keys(profile).length) return '';
+  const lines = [];
+  for (const key of DAESE_REHEARSAL_TEACHER_PROFILE_WEIGHT_KEYS) {
+    const weights = Array.isArray(profile[key]) ? profile[key] : [];
+    if (!weights.length) continue;
+    lines.push(`${key}:`);
+    for (const item of weights) {
+      const evidence = item.evidence ? ` (${item.evidence})` : '';
+      lines.push(`- ${item.label}: ${item.weight}%${evidence}`);
+    }
+  }
+  for (const key of ['passagePriorityRules', 'generationBlueprint']) {
+    const items = Array.isArray(profile[key]) ? profile[key] : [];
+    if (!items.length) continue;
+    lines.push(`${key}:`);
+    for (const item of items) lines.push(`- ${item}`);
+  }
+  if (profile.confidence || profile.confidenceReason) {
+    lines.push(`confidence: ${[profile.confidence, profile.confidenceReason].filter(Boolean).join(' - ')}`);
+  }
+  return lines.join('\n').trim();
 }
 
 function normalizeDaeseRehearsalScopeAnalysis(value) {
@@ -1028,6 +1301,37 @@ function formatDaeseRehearsalAnalysis(value) {
     for (const item of items) {
       lines.push(`- ${item}`);
     }
+  }
+  const stats = analysis.questionTypeStats || {};
+  const objectiveTypes = Array.isArray(stats.objectiveTypes) ? stats.objectiveTypes : [];
+  if (objectiveTypes.length) {
+    lines.push('Objective question type ratio:');
+    lines.push(`- sample objective questions: ${stats.objectiveTotal || 0}, analyzed exams: ${stats.analyzedExamCount || 1}, confidence: ${stats.confidence || 'low'}`);
+    for (const item of objectiveTypes) {
+      const ratio = Number.isFinite(Number(item.ratio)) ? Math.round(Number(item.ratio) * 100) : 0;
+      lines.push(`- ${item.type} (${item.label}): ${item.count} questions, ${ratio}%`);
+    }
+  }
+  if (analysis.questionFeatures.length) {
+    lines.push('Question-level feature table:');
+    for (const feature of analysis.questionFeatures.slice(0, 60)) {
+      const parts = [
+        feature.number ? `No. ${feature.number}` : '',
+        feature.kind ? `kind=${feature.kind}` : '',
+        feature.standardType ? `type=${feature.standardType}` : (feature.questionType ? `type=${feature.questionType}` : ''),
+        feature.intent ? `intent=${feature.intent}` : '',
+        feature.evidenceDistance ? `evidence=${feature.evidenceDistance}` : '',
+        feature.transformationStrength ? `transform=${feature.transformationStrength}` : '',
+        feature.distractorPattern ? `distractor=${feature.distractorPattern}` : '',
+        feature.confidence ? `confidence=${feature.confidence}` : '',
+      ].filter(Boolean);
+      if (parts.length) lines.push(`- ${parts.join(' | ')}`);
+    }
+  }
+  const teacherProfile = formatDaeseRehearsalTeacherProfile(analysis.teacherProfile);
+  if (teacherProfile) {
+    lines.push('Weighted teacher profile:');
+    lines.push(teacherProfile);
   }
   return lines.length ? lines.join('\n') : 'No stored past-exam analysis was supplied.';
 }
@@ -1059,6 +1363,139 @@ function normalizeDaeseRehearsalExamples(raw) {
   return result;
 }
 
+function normalizeDaeseRehearsalQuestionTypeProfile(raw, examples = []) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const objectiveTypes = normalizeDaeseRehearsalQuestionTypeStatList(source.objectiveTypes);
+  const objectiveSampleRaw = Number(
+    source.objectiveSampleCount || source.objectiveTotal || source.sampleObjectiveCount
+  );
+  const objectiveSampleCount = Number.isFinite(objectiveSampleRaw) && objectiveSampleRaw > 0
+    ? Math.round(objectiveSampleRaw)
+    : objectiveTypes.reduce((sum, item) => sum + item.count, 0);
+  if (objectiveTypes.length && objectiveSampleCount > 0) {
+    return {
+      school: sanitizeDaeseRehearsalText(source.school, 80),
+      grade: sanitizeDaeseRehearsalText(source.grade, 40),
+      semester: sanitizeDaeseRehearsalText(source.semester, 80),
+      examType: sanitizeDaeseRehearsalText(source.examType, 120),
+      sourceLevel: sanitizeDaeseRehearsalText(source.sourceLevel, 120),
+      sampleExamCount: Math.max(1, Math.round(Number(source.sampleExamCount) || 1)),
+      objectiveSampleCount,
+      reliability: sanitizeDaeseRehearsalText(source.reliability, 40) ||
+        (objectiveSampleCount >= 20 ? 'medium' : 'low'),
+      objectiveTypes: objectiveTypes.map((item) => ({
+        ...item,
+        ratio: item.ratio || (objectiveSampleCount ? item.count / objectiveSampleCount : 0),
+      })),
+      notes: normalizeDaeseRehearsalList(source.notes, 8, 500),
+    };
+  }
+  return buildDaeseRehearsalQuestionTypeProfileFromExamples(examples);
+}
+
+function buildDaeseRehearsalQuestionTypeProfileFromExamples(examples) {
+  const counts = new Map();
+  let objectiveSampleCount = 0;
+  let sampleExamCount = 0;
+  for (const example of Array.isArray(examples) ? examples : []) {
+    const stats = normalizeDaeseRehearsalQuestionTypeStats(
+      example && example.analysis && example.analysis.questionTypeStats,
+      example && example.analysis && example.analysis.questionFeatures
+    );
+    const objectiveTypes = Array.isArray(stats.objectiveTypes) ? stats.objectiveTypes : [];
+    if (!objectiveTypes.length) continue;
+    sampleExamCount += Math.max(1, Number(stats.analyzedExamCount) || 1);
+    for (const item of objectiveTypes) {
+      const type = normalizeDaeseRehearsalQuestionType(item.type || item.label);
+      const count = Math.max(0, Math.round(Number(item.count) || 0));
+      if (!type || !count) continue;
+      objectiveSampleCount += count;
+      counts.set(type, (counts.get(type) || 0) + count);
+    }
+  }
+  if (!objectiveSampleCount) return null;
+  return {
+    sourceLevel: 'server aggregated stored past-exam analysis',
+    sampleExamCount: sampleExamCount || examples.length || 1,
+    objectiveSampleCount,
+    reliability: objectiveSampleCount >= 40 && sampleExamCount >= 2
+      ? 'high'
+      : objectiveSampleCount >= 20
+        ? 'medium'
+        : 'low',
+    objectiveTypes: Array.from(counts.entries()).map(([type, count]) => ({
+      type,
+      label: DAESE_REHEARSAL_QUESTION_TYPE_LABELS[type] || type,
+      count,
+      ratio: count / objectiveSampleCount,
+      evidence: 'server aggregation from stored past-exam analysis',
+    })),
+    notes: ['Client did not provide a question-type profile, so the server aggregated stored example analyses.'],
+  };
+}
+
+function buildDaeseRehearsalQuestionTypeAllocation(profile, objectiveCount) {
+  if (!profile || !Number.isInteger(objectiveCount) || objectiveCount <= 0) return [];
+  const types = Array.isArray(profile.objectiveTypes)
+    ? profile.objectiveTypes
+        .map((item) => {
+          const type = normalizeDaeseRehearsalQuestionType(item.type || item.label);
+          if (!type) return null;
+          const weight = Number(item.ratio) > 0 ? Number(item.ratio) : Number(item.count);
+          if (!Number.isFinite(weight) || weight <= 0) return null;
+          return {
+            type,
+            label: DAESE_REHEARSAL_QUESTION_TYPE_LABELS[type] || item.label || type,
+            weight,
+          };
+        })
+        .filter(Boolean)
+    : [];
+  const totalWeight = types.reduce((sum, item) => sum + item.weight, 0);
+  if (!types.length || totalWeight <= 0) return [];
+  const allocations = types.map((item) => {
+    const exact = (item.weight / totalWeight) * objectiveCount;
+    const count = Math.floor(exact);
+    return { ...item, exact, count, remainder: exact - count };
+  });
+  let assigned = allocations.reduce((sum, item) => sum + item.count, 0);
+  for (const item of allocations.sort((a, b) => b.remainder - a.remainder)) {
+    if (assigned >= objectiveCount) break;
+    item.count += 1;
+    assigned += 1;
+  }
+  allocations.sort((a, b) => {
+    const aIndex = DAESE_REHEARSAL_QUESTION_TYPE_KEYS.indexOf(a.type);
+    const bIndex = DAESE_REHEARSAL_QUESTION_TYPE_KEYS.indexOf(b.type);
+    return aIndex - bIndex;
+  });
+  return allocations
+    .filter((item) => item.count > 0)
+    .map((item) => ({
+      type: item.type,
+      label: item.label,
+      count: item.count,
+      promptRule: DAESE_REHEARSAL_QUESTION_TYPE_PROMPT_RULES[item.type] || '',
+    }));
+}
+
+function formatDaeseRehearsalQuestionTypeProfile(profile, allocation) {
+  if (!profile || !Array.isArray(allocation) || !allocation.length) {
+    return 'No reliable stored question-type ratio profile was supplied.';
+  }
+  const lines = [
+    `Profile source: ${profile.sourceLevel || 'stored past-exam profile'}`,
+    `Sample exams: ${profile.sampleExamCount || 1}`,
+    `Sample objective questions: ${profile.objectiveSampleCount || 0}`,
+    `Reliability: ${profile.reliability || 'low'}`,
+    'Target objective question allocation:',
+  ];
+  for (const item of allocation) {
+    lines.push(`- ${item.type} (${item.label}): ${item.count} questions. ${item.promptRule}`);
+  }
+  return lines.join('\n');
+}
+
 function normalizeDaeseRehearsalChoiceText(value) {
   let text = sanitizeDaeseRehearsalText(value, 500).replace(/\s+/g, ' ').trim();
   text = text.replace(/^\s*(?:\d+[\.)]|\(\d+\)|\[\d+\])\s*/, '').trim();
@@ -1077,34 +1514,34 @@ function normalizeDaeseRehearsalChoiceText(value) {
 function normalizeDaeseRehearsalKoreanPrompt(value) {
   const text = sanitizeDaeseRehearsalText(value, 1200).replace(/\s+/g, ' ').trim();
   if (!text) return text;
-  if (/[?-?]/.test(text)) return text;
+  if (/[가-힣]/.test(text)) return text;
   const lower = text.toLowerCase();
   if (/what is the main (point|idea|topic|focus)|main point|main idea|main topic/.test(lower)) {
-    return '?? ?? ??? ?? ??? ???';
+    return '윗글의 주제로 가장 적절한 것은?';
   }
   if (/underlined reference.*different|different.*referent/.test(lower)) {
-    return '?? ? ?? ? ???? ??? ???? ?? ???';
+    return '밑줄 친 부분이 가리키는 대상이 나머지와 다른 것은?';
   }
   if (/grammatically incorrect|underlined part.*incorrect/.test(lower)) {
-    return '?? ? ?? ? ??? ?? ???';
+    return '어법상 틀린 것은?';
   }
   if (/used incorrectly in context|underlined word.*incorrect/.test(lower)) {
-    return '?? ? ??? ??? ??? ???? ?? ???';
+    return '문맥상 낱말의 쓰임이 적절하지 않은 것은?';
   }
   if (/complete.*sentence|best completes/.test(lower)) {
-    return '??? ??? ?? ?? ??? ???';
+    return '빈칸에 들어갈 말로 가장 적절한 것은?';
   }
   if (/most likely mean|meaning of the underlined/.test(lower)) {
-    return '?? ? ??? ??? ?? ??? ???';
+    return '밑줄 친 표현의 의미로 가장 적절한 것은?';
   }
   if (/correct order|order of the following/.test(lower)) {
-    return '??? ???? ?? ??? ?? ??? ???';
+    return '주어진 글 다음에 이어질 글의 순서로 가장 적절한 것은?';
   }
   if (/unrelated to the overall flow|unrelated sentence/.test(lower)) {
-    return '?? ??? ???? ????';
+    return '글의 흐름과 관계없는 문장은?';
   }
   if (/where does the sentence|fit best/.test(lower)) {
-    return '??? ??? ??? ??? ?? ??? ???';
+    return '주어진 문장이 들어가기에 가장 적절한 곳은?';
   }
   return text;
 }
@@ -4364,6 +4801,7 @@ function buildDaeseRehearsalPayload(body) {
   const subjectiveCount = Number.parseInt(String(body.subjectiveCount || '0'), 10);
   const semester = sanitizeDaeseRehearsalText(body.semester || body.term, 80);
   const examType = sanitizeDaeseRehearsalText(body.examType || body.examName, 120);
+  const examples = normalizeDaeseRehearsalExamples(body.examples);
   const payload = {
     year: sanitizeDaeseRehearsalText(body.year, 20),
     school: sanitizeDaeseRehearsalText(body.school, 80),
@@ -4378,7 +4816,11 @@ function buildDaeseRehearsalPayload(body) {
     objectiveCount,
     subjectiveCount,
     difficulty: sanitizeDaeseRehearsalText(body.difficulty, 20) || 'medium',
-    examples: normalizeDaeseRehearsalExamples(body.examples),
+    examples,
+    questionTypeProfile: normalizeDaeseRehearsalQuestionTypeProfile(
+      body.questionTypeProfile,
+      examples
+    ),
   };
 
   if (!payload.school || !payload.scopeText) {
@@ -4469,6 +4911,12 @@ async function analyzeDaeseRehearsalExample(payload) {
         {
           role: 'system',
           content: [
+            'You are a strict evaluator for Korean English school-exam rehearsal worksheets.',
+            'Analyze the supplied test scope, real past questions, answer key, and uploaded files to infer reusable teacher-profile evidence for future rehearsal generation.',
+            'Count every identifiable objective past-exam question by standard question type. The standard type must be one of: main_idea, blank, grammar, vocabulary, order, insertion, irrelevant, content, reference_inference, other.',
+            'Return questionFeatures and questionTypeStats so future generated rehearsal worksheets can follow the stored past-exam type ratio.',
+            'Do not copy real past questions for reuse. Summarize them only as evidence for generation rules.',
+            'Return valid JSON only. Do not use markdown.',
             '너는 고등학교 영어 내신 출제 경향 분석가다.',
             '아래에 제공되는 시험범위, 실제 기출문제, 정답을 바탕으로 이 학교 영어 선생님이 시험범위를 실제 문제로 바꾸는 방식을 분석하라.',
             '분석 목표는 단순 요약이 아니라, 다음 시험범위에서 어떤 문제가 나올 가능성이 높은지 예측할 수 있도록 출제자의 반복 습관과 문제 제작 방식을 구조화하는 것이다.',
@@ -4480,6 +4928,15 @@ async function analyzeDaeseRehearsalExample(payload) {
         {
           role: 'user',
           content: [{ type: 'input_text', text: [
+            'Analyze this school-specific past exam material and produce reusable teacher-profile evidence for the next rehearsal worksheet.',
+            'Required JSON keys: passageSelection, transformationPatterns, preferredQuestionTypes, intentPatterns, distractorPatterns, studentTrapPatterns, answerEvidencePatterns, passagePositionPatterns, choiceDesignPatterns, subjectivePatterns, scopeBlendingPatterns, difficultyPatterns, teacherHabits, lowPriorityPatterns, nextScopeRules, confidenceNotes, questionFeatures, teacherProfile, questionTypeStats.',
+            'Write every item in natural Korean. If evidence is weak, say so explicitly instead of inventing a rule.',
+            'For every identifiable past-exam question, add one questionFeatures item.',
+            'questionFeatures.kind must be objective or subjective.',
+            'For objective questionFeatures.standardType, use exactly one of: main_idea, blank, grammar, vocabulary, order, insertion, irrelevant, content, reference_inference, other.',
+            'questionTypeStats.objectiveTypes must include count and ratio by standard type. ratio is count divided by total objective past-exam questions.',
+            'questionTypeStats.objectiveTotal is the analyzed objective question count, subjectiveTotal is the subjective count, and analyzedExamCount is 1.',
+            '',
             `연도: ${payload.year}`,
             `학교: ${payload.school}`,
             `학년: ${payload.grade}`,
@@ -4536,7 +4993,7 @@ async function analyzeDaeseRehearsalExample(payload) {
             '',
             '각 항목은 반드시 구체적인 근거를 들어 작성하라.',
             '다음 JSON shape만 반환하라. 각 값은 한국어 문자열 배열이어야 한다.',
-            '{"passageSelection":[],"transformationPatterns":[],"preferredQuestionTypes":[],"intentPatterns":[],"distractorPatterns":[],"studentTrapPatterns":[],"answerEvidencePatterns":[],"passagePositionPatterns":[],"choiceDesignPatterns":[],"subjectivePatterns":[],"scopeBlendingPatterns":[],"difficultyPatterns":[],"teacherHabits":[],"lowPriorityPatterns":[],"nextScopeRules":[],"confidenceNotes":[]}',
+            '{"passageSelection":[],"transformationPatterns":[],"preferredQuestionTypes":[],"intentPatterns":[],"distractorPatterns":[],"studentTrapPatterns":[],"answerEvidencePatterns":[],"passagePositionPatterns":[],"choiceDesignPatterns":[],"subjectivePatterns":[],"scopeBlendingPatterns":[],"difficultyPatterns":[],"teacherHabits":[],"lowPriorityPatterns":[],"nextScopeRules":[],"confidenceNotes":[],"questionFeatures":[{"number":"","kind":"objective","questionType":"","standardType":"","sourceScope":"","intent":"","passagePosition":"","evidenceLocation":"","evidenceDistance":"","transformationStrength":"","distractorPattern":"","studentTrap":"","difficultyCause":"","scopeBlend":"","confidence":"","notes":""}],"teacherProfile":{"questionTypeWeights":[{"label":"","weight":0,"evidence":""}],"distractorWeights":[{"label":"","weight":0,"evidence":""}],"evidenceDistanceWeights":[{"label":"","weight":0,"evidence":""}],"transformationWeights":[{"label":"","weight":0,"evidence":""}],"passagePositionWeights":[{"label":"","weight":0,"evidence":""}],"difficultyWeights":[{"label":"","weight":0,"evidence":""}],"passagePriorityRules":[],"generationBlueprint":[],"confidence":"","confidenceReason":""},"questionTypeStats":{"objectiveTotal":0,"subjectiveTotal":0,"analyzedExamCount":1,"confidence":"","objectiveTypes":[{"type":"main_idea","label":"주제/제목/요지/요약","count":0,"ratio":0,"evidence":""}],"subjectiveTypes":[],"notes":[]}}',
           ].join(newline) }, ...daeseRehearsalFileInputContent(payload.actualFiles || [])],
         },
       ],
@@ -4695,6 +5152,14 @@ async function generateDaeseRehearsalExam(payload) {
         example.actualAnswers ? `Answer key for the past questions:${newline}${example.actualAnswers}` : 'Answer key for the past questions: not supplied',
       ].join(newline)).join(newline + newline)
     : 'No saved school-specific examples were supplied. Generate only from the new test scope.';
+  const questionTypeAllocation = buildDaeseRehearsalQuestionTypeAllocation(
+    payload.questionTypeProfile,
+    payload.objectiveCount
+  );
+  const questionTypeProfileText = formatDaeseRehearsalQuestionTypeProfile(
+    payload.questionTypeProfile,
+    questionTypeAllocation
+  );
 
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
@@ -4711,6 +5176,7 @@ async function generateDaeseRehearsalExam(payload) {
             'You create original English exam rehearsal worksheets for a Korean English academy.',
             'Use the school-specific past examples only as style and trend references.',
             'When stored past-exam analysis is supplied, treat it as the precomputed teacher-profile evidence and apply it before rereading the full past questions.',
+            'When a stored question-type ratio profile is supplied, treat it as the mandatory allocation plan for objective question types.',
             'Use supplied answer keys to infer the school exam intent, distractor style, and scoring focus.',
             'Before writing questions, analyze every supplied school-specific past example and infer how the teacher converted the old test scope into real questions.',
             'Identify repeated patterns: selected passages, transformed sentences, grammar/vocabulary/blank/order/insertion/summary/content-check preferences, distractor construction, answer evidence location, priority passages within the scope, and whether textbook and supplementary material are blended.',
@@ -4743,7 +5209,19 @@ async function generateDaeseRehearsalExam(payload) {
             '- The objectiveQuestions array length must exactly match the requested objective question count.',
             '- The subjectiveQuestions array length must exactly match the requested subjective question count.',
             '- Objective question values in question must be Korean prompts, not English prompts.',
-            '- Use Korean exam-style prompts such as ?? ?? ??? ?? ??? ???, ??? ??? ?? ?? ??? ???, ?? ? ?? ? ??? ?? ???, ?? ??? ???? ????, ??? ??? ??? ??? ?? ??? ???.',
+            '- Use Korean exam-style prompts such as 윗글의 주제로 가장 적절한 것은?, 빈칸에 들어갈 말로 가장 적절한 것은?, 어법상 틀린 것은?, 글의 흐름과 관계없는 문장은?, 주어진 문장이 들어가기에 가장 적절한 곳은?.',
+            ...(questionTypeAllocation.length
+              ? [
+                  '- The stored past-exam question-type ratio profile below is mandatory. Match each target type count within one question.',
+                  '- For every objective question, make the Korean prompt visibly match its assigned standard type using the keyword rule in the allocation plan.',
+                  '- If a target type appears high because that school used it often, keep the high share instead of applying a generic balance cap.',
+                ]
+              : [
+                  '- Do not make all objective questions the same type. Mix topic/main idea, title, blank, grammar, vocabulary, order, insertion, irrelevant sentence, content true/false, reference, and inference types.',
+                  '- Topic/main idea/title/summary questions must not exceed 30% of objective questions unless the requested objective question count is very small.',
+                  '- For 20 objective questions, include at least five distinct objective question types and keep topic/main idea/title/summary questions to six or fewer.',
+                  '- If past examples emphasize one type, reflect that tendency with a slightly higher share, but never repeat that type across the whole worksheet.',
+                ]),
             '- Objective questions should use five choices unless the scope makes that impossible.',
             '- Do not include choice labels such as 1., 2., ?, or ? inside choices. Put only the choice text.',
             '- Do not end choice text with a final period unless the period is part of an abbreviation.',
@@ -4759,6 +5237,9 @@ async function generateDaeseRehearsalExam(payload) {
             '',
             'School-specific past examples with answer keys:',
             exampleText,
+            '',
+            'Stored past-exam question-type ratio profile:',
+            questionTypeProfileText,
           ].join(newline),
         },
       ],
